@@ -9,6 +9,9 @@ from scipy.fft import fft2, ifft2, fftshift, ifftshift
 from Random_bubbles import *
 
 
+print("hi")
+
+
 ### Function to create a bubble field 
 
 def Create_Bubble_Field_Func(DIM, ff, radius, NDIM, nooverlap, periodic):
