@@ -4,7 +4,9 @@ import os
 import re
 import scipy.stats as stats
 import glob, pickle
+import numpy as np
 from scipy.fft import fft2, ifft2, fftshift, ifftshift
+#from Create_Bubble_Fields_Functions import Create_Bubble_Field_Func_Extended
 
 def PS_2D(data, length, npix):
     """
@@ -74,72 +76,102 @@ def PS_2D(data, length, npix):
     return k_bins_centres_filtered, PS_radial_filtered
 
 
-# ## Power Spectrum with Error Band
+# Power Spectrum with Error Band
 
-# In[12]:
+# def power_spect_with_errorband(L, DIM, fillingfraction, radius, sigma, NDIM, nooverlap, radius_distribution, 
+#                                gaussian_profile, periodic, num_realisations, confidence=1):
+#     """
+#     Generates multiple realizations of a toy model, calculates the mean power spectrum,
+#     and computes a specified confidence band in logarithmic space.
 
-
-def power_spect_with_errorband(Create_Field_Func, physical_length,
-        DIM, fillingfraction, radius, NDIM, nooverlap, periodic, num_realizations, confidence=2):
-    """
-    Generates multiple realizations of a toy model, calculates the mean power spectrum,
-    and computes a specified confidence band in logarithmic space.
+#     This will only work for a clean field (cannot currently create noisy fields)
     
-    Args:
-        physical_length (int): size of the field in physical units, eg 25 Mpc^2 (in 3D, the field is a cube, Mpc^3)
-            when plotting the field you will need to pass the physical_length as the max of the extent values for
-            the imshow plot (in both x,y directions)
+#     Args:
+#         L (int): size of the field in physical units, eg 25 Mpc^2 (in 3D, the field is a cube, Mpc^3)
+#             when plotting the field you will need to pass the physical_length as the max of the extent values for
+#             the imshow plot (in both x,y directions)
             
-        Parameters to pass to RandomBubbles:    
-            DIM (int): Dimension of the box.
-            fillingfraction (float): Fraction of the box to fill.
-            radius (float): Radius of the bubbles.
-            NDIM (int): Number of dimensions.
-            nooverlap (bool): If True, bubbles do not overlap.
-            periodic (bool): If True, periodic boundary conditions.
+#         Parameters to pass to RandomBubbles:    
+#             DIM (int): Dimension of the box.
+#             fillingfraction (float): Fraction of the box to fill.
+#             radius (float): Radius of the bubbles.
+#             sigma (float): standard deviation of bubble radii (if radius_distribution =/= 0)
+#             NDIM (int): Number of dimensions.
+#             nooverlap (bool): If True, bubbles do not overlap.
+#             radius_distribution : 0 or 1 or 2
+#                 are the bubble radii all the same (0), normal ditributed (1), lognormal distributed (2)
+#             gaussian_profile : True or False
+#                 do the bubbles have disctret edges or a gaussian fall off
+#             periodic (bool): If True, periodic boundary conditions.
 
-        Errorband parameters: 
-            num_realizations (int): Number of realizations to generate.
-            confidence (float): Number of sigma for the confidence level (e.g., 5 for 5-sigma).
+#         Errorband parameters: 
+#             num_realisations (int): Number of realizations to generate.
+#             confidence (float): Number of sigma for the confidence level (e.g., 5 for 5-sigma).
         
-    Returns:
-        k_values (array): k values for the power spectrum.
-        PS_mean (array): Mean power spectrum values.
-        upper_bound (array): Upper bound of the confidence band.
-        lower_bound (array): Lower bound of the confidence band.
-    """
-    PS_list = []
-    k_list = []
+#     Returns:
+#         k_values (array): k values for the power spectrum.
+#         PS_mean (array): Mean power spectrum values.
+#         upper_bound (array): Upper bound of the confidence band.
+#         lower_bound (array): Lower bound of the confidence band.
+#     """
+#     PS_list = []
+#     k_list = []
 
-    # Generate realizations of the toy model
-    for i in range(num_realizations):
+#     # Generate realizations of the toy model
+#     for i in range(num_realisations):
 
-        print(f"PARAMETERS: physical_length={physical_length}, DIM={DIM}, fillingfraction={fillingfraction}, radius={radius}, NDIM={NDIM}, nooverlap={nooverlap}, periodic={periodic}, num_realizations={num_realizations}, confidence={confidence}")
+#         print(f"PARAMETERS: physical_length={L}, DIM={DIM}, fillingfraction={fillingfraction}, radius={radius}, NDIM={NDIM}, nooverlap={nooverlap}, periodic={periodic}, num_realisations={num_realisations}, confidence={confidence}")
 
-        print(f"=========== Running realisation {i+1}/{num_realizations} ===========")
+#         print(f"=========== Running realisation {i+1}/{num_realisations} ===========")
 
-        file = Create_Field_Func(DIM, fillingfraction, radius, NDIM, nooverlap, periodic)
+#         file, cube = Create_Bubble_Field_Func_Extended(DIM, fillingfraction, radius, sigma, NDIM, nooverlap, periodic, radius_distribution, gaussian_profile, verbose=False, save=True, show_plot=False) 
 
-        data = np.loadtxt(file + ".txt")
+#         data = cube.box
         
-        if NDIM == 2:
-            k_values, PS_values = PS_2D(data, physical_length, DIM)
-        else:
-            raise ValueError("NDIM must be either 2! (have not yet added 3D)")
+#         if NDIM == 2:
+#             k_values, PS_values = PS_2D(data, L, DIM)
+#         else:
+#             raise ValueError("NDIM must be either 2! (have not yet added 3D)")
         
-        # Add a small value to avoid log(0) and take the log of the PS values
-        PS_list.append(np.log10(PS_values))
-        k_list.append(k_values)
+#         # Add a small value to avoid log(0) and take the log of the PS values
+#         PS_list.append(np.log10(PS_values))
+#         k_list.append(k_values)
     
     
 
-    # Calculate the mean and standard deviation in log space
-    PS_mean_log = np.mean(PS_list, axis=0)
-    PS_std_log = np.std(PS_list, axis=0)
+#     # Calculate the mean and standard deviation in log space
+#     PS_mean_log = np.mean(PS_list, axis=0)
+#     PS_std_log = np.std(PS_list, axis=0)
 
-    # Convert the mean and bounds back to linear space with specified confidence level
-    PS_mean = 10 ** PS_mean_log
-    upper_bound = 10 ** (PS_mean_log + confidence * PS_std_log)
-    lower_bound = 10 ** (PS_mean_log - confidence * PS_std_log)
+#     # Convert the mean and bounds back to linear space with specified confidence level
+#     PS_mean = 10 ** PS_mean_log
+#     upper_bound = 10 ** (PS_mean_log + confidence * PS_std_log)
+#     lower_bound = 10 ** (PS_mean_log - confidence * PS_std_log)
 
-    return k_values, PS_mean, upper_bound, lower_bound
+#     return k_values, PS_mean, upper_bound, lower_bound
+
+
+# # example usage
+# DIM = 200
+# ff = 0.05
+# radius = 5
+# ff = 0.01
+# sigma = 2
+# NDIM = 2
+# nooverlap = False
+# periodic = False
+# radius_distribution = 1
+# gaussian_profile = False
+
+# L = 200 # Mpc
+# num_realisations = 3
+
+# k_values, PS_mean, upper_bound, lower_bound = power_spect_with_errorband(L, DIM, ff, radius, sigma, NDIM, nooverlap, radius_distribution, 
+#                                gaussian_profile, periodic, num_realisations, confidence=2)
+
+# plt.loglog(k_values, PS_mean)
+# plt.fill_between(k_values, PS_mean+upper_bound, PS_mean-lower_bound, alpha=0.3)
+
+
+
+    
