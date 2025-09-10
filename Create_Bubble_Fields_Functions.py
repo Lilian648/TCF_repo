@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 import Random_bubbles as RB
 import Random_bubbles1_Extended as RB_extended
+import PS_Functions 
 
 
 ###################################################################################################################################################
@@ -23,13 +24,13 @@ def Create_Bubble_Field_Func(DIM, ff, radius, NDIM, nooverlap, periodic):
     """
 
     # create field
-    cube = RandomBubbles(DIM, ff, radius, NDIM, nooverlap=False, periodic=True)
+    cube = RB.RandomBubbles(DIM, ff, radius, NDIM, nooverlap=False, periodic=True)
 
     # save field to txt file
-    RandomBubbles.write_ionisation_field(cube) 
+    RB.RandomBubbles.write_ionisation_field(cube) 
 
     # get filename
-    filename = RandomBubbles.print_filechain(cube)
+    filename = RB.RandomBubbles.print_filechain(cube)
     
     return filename, cube
 
@@ -51,7 +52,7 @@ data = np.loadtxt(filename + '.txt')
 plt.imshow(cube.box)
 plt.imshow(data) # these two imshows are equivalent
 
-
+print("XX 1 XX")
 
 ###################################################################################################################################################
 ############################## Function to Create a bubble Field (with all possible parameters) ###################################################
@@ -124,9 +125,9 @@ data = np.loadtxt(filename + '.txt')
 plt.imshow(cube.box)
 
 
-
+print("XX 2 XX")
 ###################################################################################################################################################
-############################## Creat Bubble Field with Thermal Noise ##############################################################################
+############################## Add Thermal Noise to Bubble Field  #################################################################################
 ###################################################################################################################################################
 
 def create_bubble_field_with_thermal_noise(field, T_sys, bandwidth, integration_time, num_antennas, save=True, save_dir="."):
@@ -201,3 +202,149 @@ filename_stub, field_noisy = create_bubble_field_with_thermal_noise(field,
 print(filename_stub)
 print(np.shape(field_noisy))
 plt.imshow(field_noisy)
+
+print("XX 3 XX")
+###################################################################################################################################################
+############################## Create Bubble Field and Apply Resolution ###########################################################################
+###################################################################################################################################################
+
+
+    
+def apply_telescope_resolution(field, L, fwhm, NDIM, return_PS_checks=False):
+    """
+    Convolve a 2D/3D field with a Gaussian PSF in Fourier space.
+    (currently only works for 2D because PS_3D does not exist)
+
+    Parameters
+    ----------
+    field : ndarray          # shape (DIM, DIM[, DIM])
+    L : float                # physical box length (same units as fwhm, e.g. Mpc)
+    fwhm : float             # beam FWHM in physical units
+    NDIM : int               # 2 or 3
+    dtype : np.dtype or None # cast output to this (e.g. np.float32)
+    return_ps : bool         # if True, compute and return blurred PS via ps2d/ps3d_func
+    ps2d_func, ps3d_func : callables like PS_2D/PS_3D if return_ps=True
+
+    Returns
+    -------
+    If return_PS_checks is False:
+        blurred_field
+    If return_PS_checks is True:
+        blurred_field, g_fourier_2D, k, PS_blurred
+        (Note: for NDIM=3 the returned "g_fourier_2D" is actually the ND Gaussian kernel.)
+    """
+
+    print(return_PS_checks)
+
+    # --- 1. parameters ---
+    DIM = np.shape(field)[0]
+    print("DIM", DIM)
+    print("L", L)
+
+    pixel_unit = L / DIM # units of a single pixel
+    kernel_sigma_Mpc = fwhm / np.sqrt(8 * np.log(2))   # convert FWHM -> sigma of the kernel in Mpc
+
+    # Frequency grids (cycles/length), convert to angular k (1/length * 2π)
+    freq = 2*np.pi*np.fft.fftfreq(DIM, d=pixel_unit)
+
+    # --- 2. Compute Power Spectrum --- #
+    if NDIM == 2:
+        k, PS = PS_Functions.PS_2D(field, L, DIM)  # Compute 2D power spectrum
+    if NDIM == 3:
+        
+        k, PS = PS_Functions.PS_3D(field, L, DIM)  # Compute 2D power spectrum
+        # AS A NOTE THE PS_3D DOES NOT YET EXIST 
+
+    # --- 3. Create Gaussian Kernel --- # 
+    if NDIM == 2:
+        
+        # 3.a. Compute Fourier-space grid (Mpc⁻¹)
+        kx = 2 * np.pi * np.fft.fftfreq(DIM, d=pixel_unit)  
+        ky = 2 * np.pi * np.fft.fftfreq(DIM, d=pixel_unit)  
+        KX, KY = np.meshgrid(kx, ky)
+
+        # 3.b. Create Gaussian kernel in Fourier space (2D)
+        g_fourier_2D = np.exp(-0.5 * (KX**2 + KY**2) * kernel_sigma_Mpc**2)
+
+        # 3.c. Create Gaussian kernel in Fourier space (1D, radial)
+        g_fourier_1D = np.exp(-0.5 * k**2 * kernel_sigma_Mpc**2) 
+
+    
+    if NDIM == 3:
+
+        # 3.a. Compute Fourier-space grid (Mpc⁻¹) 
+        kx = 2 * np.pi * np.fft.fftfreq(DIM, d=pixel_unit)  
+        ky = 2 * np.pi * np.fft.fftfreq(DIM, d=pixel_unit)
+        kz = 2 * np.pi * np.fft.fftfreq(DIM, d=pixel_unit)
+        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+    
+    
+        # 3.b. Create Gaussian kernel in Fourier space (2D)
+        g_fourier_2D = np.exp(-0.5 * (KX**2 + KY**2 + KZ**2) * kernel_sigma_Mpc**2)
+
+        # 3.c. Create Gaussian kernel in Fourier space (1D, radial)
+        g_fourier_1D = np.exp(-0.5 * k**2 * kernel_sigma_Mpc**2)
+
+    # --- 4. Convolution with field --- #
+    # 4.a. Apply Gaussian kernel to the field in Fourier space
+    field_FT = np.fft.fftn(field)  # Compute Fourier transform of field
+    blurred_field_FT = field_FT * g_fourier_2D  # Multiply by Gaussian kernel
+    blurred_field_2D = np.fft.ifftn(blurred_field_FT).real  # Inverse FFT back to real space
+
+    # 4.b. Apply Gaussian kernel to the power spectrum
+    PS_blurred = PS * g_fourier_1D**2 
+
+    if return_PS_checks == False:
+        return blurred_field_2D, None
+
+    if return_PS_checks == True:
+        return blurred_field_2D, (g_fourier_2D, k, PS_blurred)
+
+
+# example usage
+
+DIM = 200
+ff = 0.05
+radius = 5
+ff = 0.01
+sigma = 2
+NDIM = 2
+nooverlap = False
+periodic = False
+radius_distribution = 1
+gaussian_profile = False
+
+L = 200
+fwhm = 50
+return_PS_checks = True
+
+# create field
+filename, cube = Create_Bubble_Field_Func_Extended(DIM, ff, radius, sigma, NDIM, nooverlap, periodic, 
+                     radius_distribution, gaussian_profile, verbose=False, save=True, show_plot=False)
+
+field = cube.box
+
+# apply resolution
+field_with_resolution, checks = apply_telescope_resolution(field, L, fwhm, NDIM, return_PS_checks)
+print(np.shape(field_with_resolution))
+
+# plot field with resolution effect
+plt.imshow(field_with_resolution)
+plt.show()
+
+# --- checks ---#
+if checks is not None:
+    # unpack the diagnostics
+    g_fourier_2D, k, PS_blurred = checks
+    
+    print(np.shape(k), np.shape(PS_blurred), np.shape(g_fourier_2D))
+
+    # plot PS
+    plt.loglog(k, PS_blurred)
+    plt.show()
+
+    # plot gaussian kernel in Fourier Space
+    plt.imshow(np.fft.fftshift(g_fourier_2D))
+    plt.xlabel('kx')
+    plt.ylabel('ky')
+    plt.show()
