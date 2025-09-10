@@ -130,7 +130,7 @@ print("XX 2 XX")
 ############################## Add Thermal Noise to Bubble Field  #################################################################################
 ###################################################################################################################################################
 
-def create_bubble_field_with_thermal_noise(field, T_sys, bandwidth, integration_time, num_antennas, save=True, save_dir="."):
+def add_thermal_noise(field, T_sys, bandwidth, integration_time, num_antennas, save=True, save_dir="."):
     """
     Add thermal noise to a given data field, and (optionally) save.
 
@@ -196,16 +196,17 @@ filename, cube = Create_Bubble_Field_Func_Extended(DIM, ff, radius, sigma, NDIM,
 field = cube.box
 
 # add thermal noise
-filename_stub, field_noisy = create_bubble_field_with_thermal_noise(field,
+filename_stub, field_noisy = add_thermal_noise(field,
                                        T_sys, bandwidth, integration_time, num_antennas, save=True, save_dir=".")
 
 print(filename_stub)
 print(np.shape(field_noisy))
 plt.imshow(field_noisy)
 
-print("XX 3 XX")
+
+
 ###################################################################################################################################################
-############################## Create Bubble Field and Apply Resolution ###########################################################################
+############################## Apply Resolution to a Bubble Field #################################################################################
 ###################################################################################################################################################
 
 
@@ -348,3 +349,158 @@ if checks is not None:
     plt.xlabel('kx')
     plt.ylabel('ky')
     plt.show()
+
+
+
+###################################################################################################################################################
+############################## Add Thermal Noise and Apply Resolution to a Bubble Field ###########################################################
+###################################################################################################################################################
+
+
+
+
+def apply_observation_effects(field, *,
+                              thermal=None,               # dict or None
+                              resolution=None,            # dict or None
+                              order=("thermal","resolution"),
+                              return_resolution_checks=False):
+    """
+    Apply zero or more observation effects to `field` in the specified `order`.
+    - `thermal`: dict of kwargs for add_thermal_noise (or None)
+    - `resolution`: dict of kwargs for apply_telescope_resolution (or None), e.g. {'L':..., 'fwhm':..., 'NDIM':2}
+    - `order`: tuple containing any subset of {"thermal","resolution"}
+    - `return_resolution_checks`: if True, forward the PS checks out
+
+    Returns
+    -------
+    field_out, extras
+      extras is None if no resolution checks were requested,
+      otherwise {"resolution_checks": (g_fourier_nd, k, PS_blurred)}.
+    """
+    out = np.asarray(field)
+
+    extras = None
+
+    for step in order:
+        if step == "thermal" and thermal:
+            out = add_thermal_noise(out, **thermal)
+
+        if step == "resolution" and resolution:
+            # ensure the flag is passed through
+            res_kwargs = dict(resolution)
+            res_kwargs.setdefault("return_PS_checks", return_resolution_checks)
+
+            out, checks = apply_telescope_resolution(out, **res_kwargs)
+            if return_resolution_checks:
+                extras = {"resolution_checks": checks}
+
+    return out, extras
+
+# example usage
+
+# example usage
+
+DIM = 200
+ff = 0.05
+radius = 5
+ff = 0.01
+sigma = 2
+NDIM = 2
+nooverlap = False
+periodic = False
+radius_distribution = 1
+gaussian_profile = False
+
+# create field
+filename, cube = Create_Bubble_Field_Func_Extended(DIM, ff, radius, sigma, NDIM, nooverlap, periodic, 
+                     radius_distribution, gaussian_profile, verbose=False, save=True, show_plot=False)
+
+field = cube.box
+
+##### thermal noise only #####
+
+thermal_cfg = dict(
+    T_sys=3000.0,             # K
+    bandwidth=100,            # Hz
+    integration_time=3600,    # s
+    num_antennas=128          
+)
+
+field_noisy, extras = apply_observation_effects(
+    field,
+    thermal=thermal_cfg,
+    resolution=None
+)
+
+# plot noisy field
+plt.imshow(field_noisy)
+plt.title("Bubble Field with Thermal Noise")
+plt.show()
+
+
+
+##### resolution effects only #####
+
+L = 200
+fwhm = 50
+return_PS_checks = False
+
+res_cfg = dict(
+    L=200.0,   # Mpc (same units as fwhm)
+    fwhm=5.0,  # Mpc
+    NDIM=2     # or 3, must match field.ndim
+)
+
+field_res, checks = apply_observation_effects(
+    field,
+    thermal=None,
+    resolution=res_cfg,
+    return_resolution_checks=return_PS_checks
+)
+
+
+plt.imshow(field_res)
+plt.title("Bubble Field with Resolution Effects")
+plt.show()
+
+if checks is not None:
+    g_fourier_2D, k, PS_blurred = checks["resolution_checks"]
+    
+    # plot PS
+    plt.loglog(k, PS_blurred)
+    plt.title("Power Spectrum")
+    plt.xlabel('k (radially averaged)')
+    plt.ylabel('P(k)')
+    plt.show()
+
+    # plot gaussian kernel in Fourier Space
+    plt.imshow(np.fft.fftshift(g_fourier_2D))
+    plt.xlabel('kx')
+    plt.ylabel('ky')
+    plt.title("Gaussian Kernel in Fourier Space")
+    plt.show()
+
+
+
+
+##### both thermal noise and resolution  #####
+
+thermal_cfg = dict(T_sys=3000.0, bandwidth=100, integration_time=3600.0, num_antennas=128)
+res_cfg     = dict(L=200.0, fwhm=5.0, NDIM=2)
+
+field_obs, extras = apply_observation_effects(
+    field,
+    thermal=thermal_cfg,
+    resolution=res_cfg,
+    order=("thermal", "resolution"),  # add noise, then smooth signal+noise
+    return_resolution_checks=True
+)
+
+plt.imshow(field_obs)
+plt.title("Bubble Field with Thermal Noise AND Resolution Effects")
+plt.show()
+
+# Optional diagnostics:
+if extras is not None:
+    gk, k, PS_blurred = extras["resolution_checks"]
+
