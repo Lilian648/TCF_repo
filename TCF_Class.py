@@ -1,7 +1,7 @@
 
 import os
-import re
-import subprocess
+import re, subprocess
+from pathlib import Path
 import pandas as pd
 
 
@@ -14,7 +14,8 @@ class Compute_TCF():
     def __init__(self, tcf_code_dir, L, DIM, nthreads=5, nbins=100, rmin=0, rmax=30):
 
         # files
-        self.tcf_code_dir = tcf_code_dir  # directory of the files (SC.h etc) that will compute the TCF
+        self.tcf_code_dir = Path(tcf_code_dir)  # directory of the files (SC.h etc) that will compute the TCF
+        self.header_path  = self.tcf_code_dir / "SC.h"
 
         # Data Parameters
         self.L = L # real space dimensions of the data field (eg 100Mpc)
@@ -26,21 +27,20 @@ class Compute_TCF():
         self.rmin = rmin
         self.rmax = rmax
 
-    def Update_Header_File(self, input_field_filename_no_ext, L):
+        # update header file with correct information for this Compute_TCF class instance 
+        self.Update_Header_File()
+
+    def Update_Header_File(self):
         """
         Updates SC.h with the correct parameters for a specific field.
+        This is run once when class is initalised
+        (filename of field is updated for each field individually in compute_TCF_of_single_field)
         """
         
-        header_path = os.path.join(self.tcf_code_dir, "SC.h")
-        
-        with open(header_path, 'r') as f:
-            content = f.read()
+        content = self.header_path.read_text()
 
         content = re.sub(r'static const int nthreads = \d+;', 
                          f'static const int nthreads = {self.nthreads};', content)
-
-        content = re.sub(r'static const string filename_box = ".*";', 
-                         f'static const string filename_box = "{input_field_filename_no_ext}";', content)
 
         content = re.sub(r'static const int nbins = \d+;', 
                          f'static const int nbins = {self.nbins};', content)
@@ -55,13 +55,14 @@ class Compute_TCF():
                          f'static const double L = {float(self.L)};', content)
 
         content = re.sub(r'static const int N = [\d\.]+;', 
-                         f'static const int N = {float(self.DIM)};', content)
+                         f'static const int N = {int(self.DIM)};', content)
 
-        with open(header_path, 'w') as f:
-            f.write(content)
+        
+        self.header_path.write_text(content)
 
 
-    def compute_TCF_of_single_Field(self, field_path):
+
+    def compute_TCF_of_single_field(self, field_path):
         """
         Compute the TCF of a single input field file.
         Returns a DataFrame with r, Re_s_r, Im_s_r, N_modes.
@@ -71,7 +72,12 @@ class Compute_TCF():
         field_root_str = str(field_root)               # str for writing into SC.h
     
         # Step 1: write txtfile name into SC.h
-        self.Update_Header_File(field_root_str, self.L)
+        content = self.header_path.read_text()
+        content = re.sub(r'static\s+const\s+(?:std::)?string\s+filename_box\s*=\s*".*?"\s*;',
+                         f'static const string filename_box = "{field_root_str}";',
+                         content)
+        self.header_path.write_text(content)
+        
         print(f"Updating SC.h with absolute path: {field_root_str}")
     
         # Step 2: run TCF code
@@ -90,6 +96,7 @@ class Compute_TCF():
         # Step 5: load and read data
         df = pd.read_csv(output_path, sep=r"\s+", header=None, skiprows=2, engine="python")
         df.columns = ["r", "Re_s_r", "Im_s_r", "N_modes"]
+        
         return df
 
     
@@ -124,7 +131,7 @@ class Compute_TCF():
 #     nthreads=nthreads, nbins=nbins, rmin=rmin, rmax=rmax
 # )
 
-# df = tcf.compute_TCF_of_single_Field(str(sim_slice_txtfile_path))
+# df = tcf.compute_TCF_of_single_field(str(sim_slice_txtfile_path))
 
 # # --- quick sanity checks ---
 # print("TCF dataframe (head):")
