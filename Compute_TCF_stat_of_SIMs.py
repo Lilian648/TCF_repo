@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 from pathlib import Path
 
+import TCF_Class
 
 ####################################################################################################################################################
 ################################ Extract z slices from h5 file #####################################################################################
@@ -74,7 +75,7 @@ extract_SIM_z_slices_to_txtfiles(mock_h5_filepath, output_dir, z_indices=zrange)
 ################################ Compute TCF of a single SIM #######################################################################################
 ####################################################################################################################################################
 
-def compute_TCF_of_SIM_data(
+def compute_TCF_of_single_SIM_all_realisations(
     sim_filepath,
     txtfiles_folder_path,
     z_indices=0,
@@ -125,7 +126,7 @@ def compute_TCF_of_SIM_data(
     extract_SIM_z_slices_to_txtfiles(h5_filepath=sim_filepath, output_dir=str(txtfiles_folder_path), z_indices=z_indices)
 
     # --- TCF instance (reused for all slices) ---
-    tcf = Compute_TCF(
+    tcf = TCF_Class.Compute_TCF(
         tcf_code_dir=str(tcf_code_dir),
         L=L, DIM=DIM,
         nthreads=nthreads, nbins=nbins, rmin=rmin, rmax=rmax
@@ -198,7 +199,7 @@ def compute_TCF_of_SIM_data(
 
 
 # # --- run the function on z_idx=0 only (fast check) ---
-# compute_TCF_of_SIM_data(
+# compute_TCF_of_single_SIM_all_realisations(
 #     sim_filepath=mock_h5,
 #     txtfiles_folder_path=txt_out,
 #     z_indices=0,   # just test first slice
