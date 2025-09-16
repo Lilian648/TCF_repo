@@ -218,7 +218,123 @@ def compute_TCF_of_single_SIM_all_realisations(
 #         if "TCF_zidx0" in name:
 #             print(f"{name}: shape={f[name].shape}")
 
+# # example potting
+# for t in T:
+#     plt.plot(r,t, color='gray')
+
+# plt.plot(r, np.mean(T, axis=0), color='crimson')
+# #plt.ylim(-0.2, 0.2)
+# plt.xlim(0, 100)
+# plt.show()
+
+# with h5py.File(mock_h5, "r") as f:
+#     slice2D = f['brightness_lightcone'][0, 0, :, :]
+
+# L = 295
+# plt.imshow(slice2D, extent=(0, L, 0, L))
+# plt.xlabel('x Mpc')
+# plt.ylabel('y Mpc')
+# plt.show()
 
 ####################################################################################################################################################
-################################  #######################################################################################
+################################ Compute TCF of all SIMs ###########################################################################################
+####################################################################################################################################################
+
+
+def run_all_simulations(
+    simlist,
+    *,
+    txt_root,                 # root folder where per-sim txt subfolders go
+    tcf_code_dir,             # path to your TCF code dir
+    z_indices=0,           # None = all; int or list ok
+    nthreads=5,
+    nbins=100,
+    rmin=3,
+    rmax=100,
+    overwrite_h5=True,
+    overwrite_txt=True,
+    continue_on_error=False
+):
+    txt_root = Path(txt_root)
+    txt_root.mkdir(parents=True, exist_ok=True)
+
+    t0_all = time.time()
+    print(f" Starting TCF run for {len(simlist)} sims\n")
+
+    for s_idx, sim_path in enumerate(simlist, start=1):
+        sim_path = Path(sim_path)
+        sim_name = sim_path.stem                      # e.g. "Lightcone_FID_..."
+        per_sim_txt = txt_root / sim_name            # keep txt per sim (clean)
+        per_sim_txt.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n========== [{s_idx}/{len(simlist)}] {sim_name} ==========")
+        print(f"H5:   {sim_path}")
+        print(f"TXT:  {per_sim_txt}")
+
+        t0 = time.time()
+        try:
+            compute_TCF_of_single_SIM_all_realisations(
+                sim_filepath=sim_path,
+                txtfiles_folder_path=per_sim_txt,
+                z_indices=z_indices,
+                tcf_code_dir=tcf_code_dir,
+                nthreads=nthreads,
+                nbins=nbins,
+                rmin=rmin,
+                rmax=rmax,
+                overwrite_h5=overwrite_h5,
+                overwrite_txt=overwrite_txt,
+                continue_on_error=continue_on_error,
+            )
+        except Exception as e:
+            print(f"✗ FAILED on {sim_name}: {e}")
+            if not continue_on_error:
+                raise
+            else:
+                continue
+
+        # (optional) quick sanity: list newly written datasets for first z only
+        try:
+            with h5py.File(sim_path, "r") as f:
+                keys = [k for k in f.keys() if str(k).startswith("TCF_zidx")]
+                keys.sort()
+                preview = ", ".join(keys[:4]) + (" ..." if len(keys) > 4 else "")
+                print(f"   ✓ Wrote datasets: {preview}")
+        except Exception as _:
+            pass
+
+        print(f"    {sim_name} done in {time.time()-t0:.1f}s")
+
+    print(f"\n✔ All sims done in {time.time()-t0_all:.1f}s")
+
+# # example usage
+# # configure once
+# tcf_code_dir = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_required_files"
+# txt_root     = Path("/data/cluster/lcrascal/SIM_data/h5_files/mock_tests/mock_txtfiles")
+
+# # your list of H5 files
+# mock_h5_1 = Path("/data/cluster/lcrascal/SIM_data/h5_files/mock_tests/Lightcone_MOCK_1.h5")
+# mock_h5_2 = Path("/data/cluster/lcrascal/SIM_data/h5_files/mock_tests/Lightcone_MOCK_2.h5")
+# simlist = [mock_h5_1, mock_h5_2]
+
+# # run (fast test config: 2 z-slices, fewer bins/threads)
+# run_all_simulations(
+#     simlist,
+#     txt_root=txt_root,
+#     tcf_code_dir=tcf_code_dir,
+#     z_indices=0,   # None for all
+#     nthreads=5,
+#     nbins=100,
+#     rmin=3,
+#     rmax=100,
+#     overwrite_h5=True,
+#     overwrite_txt=True,
+#     continue_on_error=False,
+# )
+
+
+# same checks as compute_TCF_of_single_SIM_all_realisations function  
+
+####################################################################################################################################################
+################################  ###########################################################################################
 ####################################################################################################################################################
