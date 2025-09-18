@@ -554,56 +554,91 @@ def run_all(
     rmax=100,
     overwrite_h5=True,
     overwrite_txt=True,
-    continue_on_error=False
+    continue_on_error=False,
+    # extra args needed for noise/smoothing
+    obs_time=1000,
+    total_int_time=6.0,
+    int_time=10.0,
+    declination=-30.0,
+    subarray_type="AAstar",
+    save_uvmap,
+    njobs=4,
+    checkpoint=16,
+    bmax_km=2.0,
 ):
+    """
+    Loop over sims, run TCF. If 'FID' in filename, also generate noise/smoothing
+    variants and run TCF on those.
+    """
     simlist = [Path(p).resolve() for p in simlist]
 
     t0_all = time.time()
-    print(f"🚀 Starting TCF run for {len(simlist)} sims\n")
+    print(f" Starting TCF run for {len(simlist)} sims\n")
 
     for s_idx, sim_path in enumerate(simlist, start=1):
-        sim_name = sim_path.stem  # e.g. "Lightcone_FID_..."
-
-        # the per-sim function will create: sim_path.parent / f"{sim_name}_txtfiles"
-        expected_txt = sim_path.parent / f"{sim_name}_txtfiles"
-
+        sim_name = sim_path.stem
         print(f"\n========== [{s_idx}/{len(simlist)}] {sim_name} ==========")
-        print(f"H5:   {sim_path}")
-        print(f"TXT:  {expected_txt}  (auto-created if needed)")
+        print(f"H5: {sim_path}")
 
-        t0 = time.time()
         try:
-            compute_TCF_of_single_SIM_all_realisations(
-                sim_filepath=sim_path,
-                z_indices=z_indices,
-                tcf_code_dir=tcf_code_dir,
-                nthreads=nthreads,
-                nbins=nbins,
-                rmin=rmin,
-                rmax=rmax,
-                overwrite_h5=overwrite_h5,
-                overwrite_txt=overwrite_txt,
-                continue_on_error=continue_on_error,
-            )
+            if "FID" in sim_name:
+                print(" Detected FID sim → adding noise/smoothing variants")
+
+                # generate noise variants
+                outfiles = add_noise_and_smooth_all_realisations(
+                    clean_h5_file=sim_path,
+                    obs_time=obs_time,
+                    total_int_time=total_int_time,
+                    int_time=int_time,
+                    declination=declination,
+                    subarray_type=subarray_type,
+                    verbose=True,
+                    save_uvmap=save_uvmap,
+                    njobs=njobs,
+                    checkpoint=checkpoint,
+                    bmax_km=bmax_km,
+                )
+
+                # collect all four sims (clean + 3 variants)
+                sims_to_run = {
+                    "Clean": sim_path,
+                    "Noise-only": outfiles["noise_only_h5"],
+                    "Noisy": outfiles["noisy_h5"],
+                    "Observed": outfiles["observed_h5"],
+                }
+
+            else:
+                # non-FID sims → just the original
+                sims_to_run = {"Base": sim_path}
+
+            # now run TCF for each chosen sim
+            for tag, h5file in sims_to_run.items():
+                print(f"\n  → Running TCF for {tag} version ({h5file})")
+
+                try:
+                    compute_TCF_of_single_SIM_all_realisations(
+                        sim_filepath=h5file,
+                        z_indices=z_indices,
+                        tcf_code_dir=tcf_code_dir,
+                        nthreads=nthreads,
+                        nbins=nbins,
+                        rmin=rmin,
+                        rmax=rmax,
+                        overwrite_h5=overwrite_h5,
+                        overwrite_txt=overwrite_txt,
+                        continue_on_error=continue_on_error,
+                    )
+                except Exception as e:
+                    print(f"   ✗ FAILED on {tag} version: {e}")
+                    if not continue_on_error:
+                        raise
+                    continue
+
         except Exception as e:
             print(f"✗ FAILED on {sim_name}: {e}")
             if not continue_on_error:
                 raise
             continue
-
-        # (optional) quick sanity: list newly written datasets
-        try:
-            with h5py.File(sim_path, "r") as f:
-                keys = sorted(k for k in f.keys() if str(k).startswith("TCF_zidx"))
-                preview = ", ".join(keys[:4]) + (" ..." if len(keys) > 4 else "")
-                if keys:
-                    print(f"   ✓ Wrote datasets: {preview}")
-                else:
-                    print("   (no TCF_zidx* datasets found)")
-        except Exception:
-            pass
-
-        print(f"⏱  {sim_name} done in {time.time()-t0:.1f}s")
 
     print(f"\n✔ All sims done in {time.time()-t0_all:.1f}s")
 
