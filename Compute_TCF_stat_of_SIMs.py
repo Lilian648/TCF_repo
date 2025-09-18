@@ -228,7 +228,7 @@ def add_noise_and_smooth_all_realisations(
                 if (rz_used.shape != redshifts.shape) or (not np.array_equal(rz_used, redshifts)):
                     raise RuntimeError(
                         "smooth_lightcone returned a different redshift grid than provided."
-                        f"{msg_extra} This usually means the function flipped the LOS because "
+                        "This usually means the function flipped the LOS because "
                         "your input redshifts were decreasing. Ensure input redshifts are strictly "
                         "increasing and try again."
                     )
@@ -264,58 +264,56 @@ def add_noise_and_smooth_all_realisations(
 
 # example usage
 
-# testing
+# # --- parameters --- #
+# # 1.  AAstar, 1000hrs 
+# obs_time = 1000.                       # total observation hours
+# total_int_time = 6.                   # hours per day
+# int_time = 10.                        # seconds
+# declination = -30.0                   # declination of the field in degrees
+# subarray_type = "AA4"
+# bmax_km = 2. #* units.km # km
 
-# --- parameters --- #
-# 1.  AAstar, 1000hrs 
-obs_time = 1000.                       # total observation hours
-total_int_time = 6.                   # hours per day
-int_time = 10.                        # seconds
-declination = -30.0                   # declination of the field in degrees
-subarray_type = "AA4"
-bmax_km = 2. #* units.km # km
-
-verbose = False
-save_uvmap = "/data/cluster/lcrascal/uvmaps/uvmap_AA4_1000hrs.h5"
-njobs = 1
-checkpoint = 16
+# verbose = False
+# save_uvmap = "/data/cluster/lcrascal/uvmaps/uvmap_AA4_1000hrs.h5"
+# njobs = 1
+# checkpoint = 16
 
 
-# --- test inputs --- #
-mock_clean = '/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5'
+# # --- test inputs --- #
+# mock_clean = '/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5'
 
 
-out_paths = add_noise_and_smooth_all_realisations(
-    clean_h5_file=mock_clean,
-    obs_time=obs_time,            # fake parameters just for test
-    total_int_time=total_int_time,
-    int_time=int_time,
-    declination=declination,
-    subarray_type=subarray_type,
-    verbose=verbose,
-    save_uvmap=save_uvmap,
-    njobs=njobs,
-    checkpoint=checkpoint,
-    bmax_km=bmax_km,
-)
+# out_paths = add_noise_and_smooth_all_realisations(
+#     clean_h5_file=mock_clean,
+#     obs_time=obs_time,            # fake parameters just for test
+#     total_int_time=total_int_time,
+#     int_time=int_time,
+#     declination=declination,
+#     subarray_type=subarray_type,
+#     verbose=verbose,
+#     save_uvmap=save_uvmap,
+#     njobs=njobs,
+#     checkpoint=checkpoint,
+#     bmax_km=bmax_km,
+# )
 
-print("\nOutputs created:")
-for k, v in out_paths.items():
-    print(f"  {k}: {v}")
+# print("\nOutputs created:")
+# for k, v in out_paths.items():
+#     print(f"  {k}: {v}")
 
-# --- verify outputs ---
-for key in ["noise_only_h5", "noisy_h5", "observed_h5"]:
-    path = Path(out_paths[key])
-    print(f"\n File Name: {path.name}")
-    with h5py.File(path, "r") as f:
-        for dsname in ["brightness_lightcone", "redshifts", "frequencies", "ngrid"]:
-            assert dsname in f, f"{dsname} missing from {path.name}"
-        arr = f["brightness_lightcone"]
-        print(f" shape={arr.shape}, dtype={arr.dtype}")
-        # quick sample statistics for the first realisation
-        sample = arr[0]
-        print("  sample stats:",
-              f"min={np.nanmin(sample):.3g}, max={np.nanmax(sample):.3g}, mean={np.nanmean(sample):.3g}")
+# # --- verify outputs ---
+# for key in ["noise_only_h5", "noisy_h5", "observed_h5"]:
+#     path = Path(out_paths[key])
+#     print(f"\n File Name: {path.name}")
+#     with h5py.File(path, "r") as f:
+#         for dsname in ["brightness_lightcone", "redshifts", "frequencies", "ngrid"]:
+#             assert dsname in f, f"{dsname} missing from {path.name}"
+#         arr = f["brightness_lightcone"]
+#         print(f" shape={arr.shape}, dtype={arr.dtype}")
+#         # quick sample statistics for the first realisation
+#         sample = arr[0]
+#         print("  sample stats:",
+#               f"min={np.nanmin(sample):.3g}, max={np.nanmax(sample):.3g}, mean={np.nanmean(sample):.3g}")
 
 
 ####################################################################################################################################################
