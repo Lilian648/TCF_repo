@@ -63,13 +63,260 @@ def extract_SIM_z_slices_to_txtfiles(h5_filepath, output_dir, z_indices=None):
 
 
 # example usage
-"""
-mock_h5_filepath = 'XXX/data/cluster/lcrascal/SIM_data/h5_files/Lightcone_MOCK.h5'
-output_dir = 'XXX/data/cluster/lcrascal/SIM_data/h5_files/mock_txtfiles/'
 
-zrange = np.linspace(0, 12, 13, dtype=int)
-extract_SIM_z_slices_to_txtfiles(mock_h5_filepath, output_dir, z_indices=zrange)
-"""
+# mock_h5_filepath = 'XXX/data/cluster/lcrascal/SIM_data/h5_files/Lightcone_MOCK.h5'
+# output_dir = 'XXX/data/cluster/lcrascal/SIM_data/h5_files/mock_txtfiles/'
+
+# zrange = np.linspace(0, 12, 13, dtype=int)
+# extract_SIM_z_slices_to_txtfiles(mock_h5_filepath, output_dir, z_indices=zrange)
+
+
+####################################################################################################################################################
+################################ Add Noise + Smoothing to a single SIM #############################################################################
+####################################################################################################################################################
+
+
+def add_noise_and_smooth_all_realisations(
+    clean_h5_file,
+    *,
+    obs_time,
+    total_int_time,
+    int_time,
+    declination,
+    subarray_type,
+    verbose,
+    save_uvmap,
+    njobs,
+    checkpoint,
+    bmax_km
+):
+    """
+    From a clean lightcone H5 (n_real, z, x, y), produce:
+      <stem>_NOISE_ONLY_LC.h5          (noise-only)
+      <stem>_NOISE.h5                  (clean + noise)
+      <stem>_NOISE_SMOOTHING.h5        (subtract LOS-mean(clean) + noise, then smooth)
+    All saved in canonical (n_real, z, x, y). Each output also stores 'redshifts_used'
+    which matches any flip performed internally by smooth_lightcone.
+
+    Notes:
+    - t2c.noise_lightcone returns (x,y,z)
+    - t2c.smooth_lightcone expects (x,y,z) and returns (x,y,z) with a possible axis-2 flip
+      if input redshifts are decreasing. It returns the redshifts it used as the 2nd value.
+    """
+
+    # ---- helpers to convert per-realisation views ----
+    def zxy_to_xyz(a):  # (z,x,y) -> (x,y,z)
+        return np.moveaxis(a, 0, 2)
+
+    def xyz_to_zxy(a):  # (x,y,z) -> (z,x,y)
+        return np.moveaxis(a, 2, 0)
+
+    clean_h5_file = Path(clean_h5_file).resolve()
+    out_dir = clean_h5_file.parent  # directory 
+    stem    = clean_h5_file.stem
+
+    # target H5 paths
+    noiseonly_out = out_dir / f"{stem}_NOISE_ONLY_LC.h5"
+    noisy_out     = out_dir / f"{stem}_NOISE.h5"
+    obs_out       = out_dir / f"{stem}_NOISE_SMOOTHING.h5"
+
+    print("Starting SKA noise + smoothing for all realisations")
+    print(f"Input:  {clean_h5_file.name}")
+    print(f"Will create output: {noiseonly_out.name}, {noisy_out.name}, {obs_out.name}")
+
+    # ---- read metadata once ----
+    with h5py.File(clean_h5_file, 'r') as f:
+        redshifts   = f['redshifts'][...]
+        frequencies = f['frequencies'][...]
+        box_length  = float(f['box_length'][...].squeeze())
+        box_dim     = int(np.array(f['ngrid'][...]).squeeze())
+        ds          = f['brightness_lightcone']      # (n_real, z, x, y)
+        n_real, n_z, ny, nx = ds.shape
+        assert ny == nx == box_dim, f"Shape mismatch: {ds.shape} vs box_dim={box_dim}"
+        print(f"Header: n_real={n_real}, n_z={n_z}, DIM={box_dim}")
+
+    # ---- UV map path ----
+    uvpath = Path(save_uvmap)
+    uvpath.parent.mkdir(parents=True, exist_ok=True)
+    print(f"{'Reusing' if uvpath.exists() else 'Will save'} UV map at: {uvpath}")
+
+    # ---- small factory to build output files ----
+    def create_out(path):
+        fout = h5py.File(path, 'w')
+        fout.create_dataset("redshifts", data=redshifts)
+        fout.create_dataset("frequencies", data=frequencies)
+        fout.create_dataset("box_length", data=np.array([box_length], dtype=np.float64))
+        fout.create_dataset("ngrid", data=np.array([box_dim], dtype=np.int64))
+        fout.create_dataset("nrealisations", data=np.array([n_real], dtype=np.int64))
+        dset = fout.create_dataset(
+            "brightness_lightcone",
+            shape=(n_real, n_z, box_dim, box_dim),
+            dtype=np.float32,
+            chunks=True,
+            compression="gzip",
+            compression_opts=4,
+        )
+        dset.attrs["axis_order"] = "n_real, z, x, y"
+        # we'll store the actually used redshifts (may be flipped by t2c) here:
+        rz = fout.create_dataset("redshifts_used", shape=(n_z,), dtype=redshifts.dtype)
+        return fout, dset, rz
+
+    f_noise, d_noise, rz_noise = create_out(noiseonly_out)
+    f_noisy, d_noisy, rz_noisy = create_out(noisy_out)
+    f_obs,   d_obs,   rz_obs   = create_out(obs_out)
+
+    try:
+        # set redshifts_used defaults to input; may be overwritten after a call to smooth_lightcone
+        rz_noise[...] = redshifts
+        rz_noisy[...] = redshifts
+        rz_obs  [...] = redshifts
+
+        with h5py.File(clean_h5_file, 'r') as f:
+            ds = f['brightness_lightcone']  # (n_real, z, x, y)
+
+            for i in range(n_real):
+                # if i % 10 == 0:
+                print(f" ➤ Realisation {i+1}/{n_real}")
+
+                # (z,x,y) for a single realisation
+                clean_zxy = ds[i, ...]
+                # convert to (x,y,z) for t2c
+                clean_xyz = zxy_to_xyz(clean_zxy)  # (x,y,z)
+
+                # --- noise (x,y,z) ---
+                noise_xyz = t2c.noise_lightcone(
+                    ncells=box_dim,
+                    zs=redshifts,
+                    obs_time=obs_time,
+                    total_int_time=total_int_time,
+                    int_time=int_time,
+                    declination=declination,
+                    subarray_type=subarray_type,
+                    boxsize=box_length,
+                    verbose=verbose,
+                    save_uvmap=str(uvpath),
+                    n_jobs=njobs,
+                    checkpoint=checkpoint,
+                )
+
+                # basic shape guard (common mistake: zxy instead of xyz)
+                if noise_xyz.shape != (box_dim, box_dim, n_z):
+                    if noise_xyz.shape == (n_z, box_dim, box_dim):
+                        noise_xyz = zxy_to_xyz(noise_xyz)
+                    else:
+                        raise ValueError(f"Unexpected noise shape {noise_xyz.shape}; expected (x,y,z)=({box_dim},{box_dim},{n_z})")
+
+                # write noise-only as (z,x,y)
+                d_noise[i, ...] = xyz_to_zxy(noise_xyz)
+
+                # --- noisy = clean + noise (still xyz) ---
+                noisy_xyz = (clean_xyz + noise_xyz).astype(np.float32)
+                d_noisy[i, ...] = xyz_to_zxy(noisy_xyz)
+
+                # --- observed: subtract LOS-mean(clean), add noise, smooth ---
+                # smooth_lightcone expects (x,y,z), treats axis=2 as z,
+                # returns (x,y,z) and redshifts_used (possibly flipped)
+                obs_xyz, rz_used = t2c.smooth_lightcone(
+                    lightcone=noise_xyz + t2c.subtract_mean_signal(clean_xyz, los_axis=2),
+                    z_array=redshifts,
+                    box_size_mpc=box_length,
+                    max_baseline=bmax_km,
+                )
+                obs_xyz = obs_xyz.astype(np.float32)
+
+                # check correct redshift used
+                if (rz_used.shape != redshifts.shape) or (not np.array_equal(rz_used, redshifts)):
+                    raise RuntimeError(
+                        "smooth_lightcone returned a different redshift grid than provided."
+                        f"{msg_extra} This usually means the function flipped the LOS because "
+                        "your input redshifts were decreasing. Ensure input redshifts are strictly "
+                        "increasing and try again."
+                    )
+
+                # sanity on shape
+                if obs_xyz.shape != (box_dim, box_dim, n_z):
+                    if obs_xyz.shape == (n_z, box_dim, box_dim):
+                        obs_xyz = zxy_to_xyz(obs_xyz)
+                    else:
+                        raise ValueError(f"Unexpected smoothed shape {obs_xyz.shape}")
+
+                # write observed back as (z,x,y), record the z grid actually used
+                d_obs[i, ...] = xyz_to_zxy(obs_xyz)
+                rz_obs[...]   = redshifts  # same for all realisations for a given input; OK to overwrite
+
+                # check things are working sensibly
+                assert np.allclose(noisy_xyz - clean_xyz, noise_xyz, atol=1e-5), \
+                    "Noisy - Clean != Noise-only (something is inconsistent!)"
+
+
+    finally:
+        f_noise.close()
+        f_noisy.close()
+        f_obs.close()
+
+    print("All realisations processed and saved.")
+    return {
+        "noise_only_h5": str(noiseonly_out),
+        "noisy_h5": str(noisy_out),
+        "observed_h5": str(obs_out)
+    }
+
+
+# example usage
+
+# testing
+
+# --- parameters --- #
+# 1.  AAstar, 1000hrs 
+obs_time = 1000.                       # total observation hours
+total_int_time = 6.                   # hours per day
+int_time = 10.                        # seconds
+declination = -30.0                   # declination of the field in degrees
+subarray_type = "AA4"
+bmax_km = 2. #* units.km # km
+
+verbose = False
+save_uvmap = "/data/cluster/lcrascal/uvmaps/uvmap_AA4_1000hrs.h5"
+njobs = 1
+checkpoint = 16
+
+
+# --- test inputs --- #
+mock_clean = '/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5'
+
+
+out_paths = add_noise_and_smooth_all_realisations(
+    clean_h5_file=mock_clean,
+    obs_time=obs_time,            # fake parameters just for test
+    total_int_time=total_int_time,
+    int_time=int_time,
+    declination=declination,
+    subarray_type=subarray_type,
+    verbose=verbose,
+    save_uvmap=save_uvmap,
+    njobs=njobs,
+    checkpoint=checkpoint,
+    bmax_km=bmax_km,
+)
+
+print("\nOutputs created:")
+for k, v in out_paths.items():
+    print(f"  {k}: {v}")
+
+# --- verify outputs ---
+for key in ["noise_only_h5", "noisy_h5", "observed_h5"]:
+    path = Path(out_paths[key])
+    print(f"\n File Name: {path.name}")
+    with h5py.File(path, "r") as f:
+        for dsname in ["brightness_lightcone", "redshifts", "frequencies", "ngrid"]:
+            assert dsname in f, f"{dsname} missing from {path.name}"
+        arr = f["brightness_lightcone"]
+        print(f" shape={arr.shape}, dtype={arr.dtype}")
+        # quick sample statistics for the first realisation
+        sample = arr[0]
+        print("  sample stats:",
+              f"min={np.nanmin(sample):.3g}, max={np.nanmax(sample):.3g}, mean={np.nanmean(sample):.3g}")
+
 
 ####################################################################################################################################################
 ################################ Compute TCF of a single SIM #######################################################################################
