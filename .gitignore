@@ -1,0 +1,18 @@
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+*.o
+*.so
+*.a
+
+# OS / editor junk
+.DS_Store
+*.swp
