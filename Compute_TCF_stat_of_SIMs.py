@@ -2,6 +2,10 @@ import os
 import h5py
 import numpy as np
 from pathlib import Path
+import re, time
+from datetime import datetime
+import tools21cm as t2c
+
 
 import TCF_Class
 
@@ -75,7 +79,6 @@ def extract_SIM_z_slices_to_txtfiles(h5_filepath, output_dir, z_indices=None):
 ################################ Add Noise + Smoothing to a single SIM #############################################################################
 ####################################################################################################################################################
 
-
 def add_noise_and_smooth_all_realisations(
     clean_h5_file,
     *,
@@ -112,9 +115,15 @@ def add_noise_and_smooth_all_realisations(
         return np.moveaxis(a, 2, 0)
 
     clean_h5_file = Path(clean_h5_file).resolve()
-    out_dir = clean_h5_file.parent  # directory 
     stem    = clean_h5_file.stem
+    
+    # Build noise tag (e.g. "AAstar_1000hrs")
+    noise_tag = f"{subarray_type}_{int(obs_time)}hrs"
 
+    # Create the output directory: parent / noise_tag
+    out_dir = Path(clean_h5_file).parent / noise_tag
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
     # target H5 paths
     noiseonly_out = out_dir / f"{stem}_NOISE_ONLY_LC.h5"
     noisy_out     = out_dir / f"{stem}_NOISE.h5"
@@ -260,7 +269,6 @@ def add_noise_and_smooth_all_realisations(
         "noisy_h5": str(noisy_out),
         "observed_h5": str(obs_out)
     }
-
 
 # example usage
 
@@ -543,10 +551,13 @@ def compute_TCF_of_single_SIM_all_realisations(
 ####################################################################################################################################################
 
 
+import time, h5py
+from pathlib import Path
+
 def run_all(
     simlist,
     *,
-    tcf_code_dir,             # path to your TCF code dir
+    tcf_code_dir,             # path to TCF code dir
     z_indices=0,              # None = all; int or list ok
     nthreads=5,
     nbins=100,
@@ -565,10 +576,19 @@ def run_all(
     njobs=4,
     checkpoint=16,
     bmax_km=2.0,
+    # function specific parameters
+    include_clean=True       # compute the TCF of the clean sim?
 ):
     """
     Loop over sims, run TCF. If 'FID' in filename, also generate noise/smoothing
     variants and run TCF on those.
+
+    Notes:
+    - By default (include_clean=True), also runs TCF on the original clean
+      FID H5 (left at its parent location). Set `include_clean=False` for
+      subsequent runs of other noise configurations to avoid recomputing
+      the clean TCF and re-extracting TXT slices.
+      
     """
     simlist = [Path(p).resolve() for p in simlist]
 
@@ -600,12 +620,17 @@ def run_all(
                 )
 
                 # collect all four sims (clean + 3 variants)
-                sims_to_run = {
-                    "Clean": sim_path,
-                    "Noise-only": outfiles["noise_only_h5"],
-                    "Noisy": outfiles["noisy_h5"],
-                    "Observed": outfiles["observed_h5"],
-                }
+                sims_to_run = {}
+                if include_clean:
+                    sims_to_run["Clean"] = sim_path
+                else:
+                    print("  → Skipping Clean (include_clean=False)")
+
+                sims_to_run.update({
+                    "Noise-only": Path(outfiles["noise_only_h5"]),
+                    "Noisy":      Path(outfiles["noisy_h5"]),
+                    "Observed":   Path(outfiles["observed_h5"]),
+                })
 
             else:
                 # non-FID sims → just the original
@@ -644,31 +669,54 @@ def run_all(
 
 
 
+
+
 # example usage
 
-# # configure once
-# tcf_code_dir = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_required_files"
+###############################################
+########## RUNNING FOR AASTAR 100HRS ##########
+###############################################
+print(" %%%%%%%% RUNNING  FOR AASTAR 100HRS %%%%%%%% ")
 
-# # your list of H5 files
-# mock_h5_1 = Path("/data/cluster/lcrascal/SIM_data/h5_files/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5")
-# mock_h5_2 = Path("/data/cluster/lcrascal/SIM_data/h5_files/mock_tests/Mock_SIM_2/Lightcone_MOCK_2.h5")
-# simlist = [mock_h5_1, mock_h5_2]
+# configure once
+tcf_code_dir = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_required_files"
 
-# # run (fast test config: 2 z-slices, fewer bins/threads)
-# run_all(
-#     simlist,
-#     tcf_code_dir=tcf_code_dir,
-#     z_indices=0,   # None for all
-#     nthreads=5,
-#     nbins=100,
-#     rmin=3,
-#     rmax=100,
-#     overwrite_h5=True,
-#     overwrite_txt=True,
-#     continue_on_error=False,
-# )
+# your list of H5 files
+mock_h5_1 = Path("/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5")
+mock_h5_FID = Path("/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_FID/Lightcone_MOCK_FID.h5")
 
-# same checks as compute_TCF_of_single_SIM_all_realisations function  
+
+
+# --- test file list ---
+simlist = [
+    mock_h5_FID,           # should trigger noise/smoothing path
+    mock_h5_1,             # should follow normal path
+]
+
+# Call run_all with minimal args
+run_all(
+    simlist=simlist,
+    tcf_code_dir=tcf_code_dir,   
+    z_indices=0,
+    nthreads=5,
+    nbins=100,
+    rmin=3,
+    rmax=100,
+    overwrite_h5=True,
+    overwrite_txt=True,
+    continue_on_error=True,
+    obs_time=100, # XXXXXX
+    total_int_time=6.0, 
+    int_time=10.0, 
+    declination=-30.0, 
+    subarray_type="AAstar", # XXXXXX
+    save_uvmap="/data/cluster/lcrascal/uvmaps/uvmap_AAstar_100hrs.h5",  # XXXXXX
+    njobs=1, 
+    checkpoint=8, 
+    bmax_km=2.0,
+    include_clean=False # XXXXXX
+)
+
 
 ####################################################################################################################################################
 ################################  ###########################################################################################
