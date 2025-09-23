@@ -176,6 +176,60 @@ print(f"✅ Loaded {len(TCF_clean)} clean sims, {len(TCF_noisy)} noisy sims")
 ####################################################################################################################################################
 
 
+def compute_tcf_fisher(tcf_data_dict, 
+    delta_params,
+    sim_params,
+    n_realisations
+):
+    """Compute Fisher matrix from TCF simulation files.""" 
+
+    ############ Compute derivatives ############
+    print("Computing Derivatives")
+    rvals_len = tcf_data_dict[f'{sim_params[0]}_Plus']['rvals'].shape[0]
+    TCF_derivs = np.zeros((len(sim_params), n_realisations, rvals_len))
+    for idx, param in enumerate(sim_params):
+        plus = tcf_data_dict[f'{param}_Plus']['tcf_clean']
+        minus = tcf_data_dict[f'{param}_Minus']['tcf_clean']
+        TCF_derivs[idx] = (plus - minus) / delta_params[idx]
+    rvals = tcf_data_dict[f'{sim_params[0]}_Plus']['rvals']
+
+    ############# Whitening the Data ############
+    print("Whitening Data ")
+    TCF_fid = tcf_data_dict['FID']['tcf_obs'] # change to TCF_fid_obs?
+    std_fid = np.std(TCF_fid, axis=0) # change to std_fid_obs ?
+    mask = std_fid > 0
+    white_fid = TCF_fid[:, mask] / std_fid[mask]
+    rvals = rvals[mask]
+    TCF_derivs_white = TCF_derivs[..., mask] / std_fid[mask]
+
+    ############# Compute Data Cov Matrix ############
+    print("Computing Data Cov Matrix")
+    data_cov_matrix = np.cov(white_fid, rowvar=False)
+    cond_num = np.log10(np.linalg.cond(data_cov_matrix))
+    print(f'log10 Condition number: {cond_num:.2f}')
+
+    ############# Convergence testing + Compute FM ############
+    print("Convergence Testing ")
+    samples = np.arange(5, n_realisations + 5, 10)
+    nparams = len(sim_params)
+    TCF_Fisher = np.zeros((samples.size, nparams, nparams))
+    TCF_Fisher_Inv = np.zeros((samples.size, nparams, nparams))
+
+    for r, sample_size in enumerate(samples):
+        deriv_sample = np.mean(TCF_derivs_white[:, :sample_size, :], axis=1)
+        for i in range(nparams):
+            for j in range(nparams):
+                TCF_Fisher[r, i, j] = np.dot(deriv_sample[i], np.dot(np.linalg.inv(data_cov_matrix), deriv_sample[j]))
+        TCF_Fisher_Inv[r] = np.linalg.inv(TCF_Fisher[r])
+
+    return {
+        'TCF_derivs': TCF_derivs,             # derivatives
+        'data_cov_matrix': data_cov_matrix,   # data covariance matrix
+        'TCF_Fisher': TCF_Fisher,             # Fisher Matrix ([-1] = final FM)
+        'TCF_Fisher_Inv': TCF_Fisher_Inv,     # Inverse Fisher Matrix = Result Covariance Matrix ([-1] = final inverse FM)
+        'rvals': rvals                        # r values
+    }
+
 
 
 
