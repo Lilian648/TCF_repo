@@ -65,7 +65,7 @@ print(f'Lightcone runs from z={redshifts.min():.2f} to z = {redshifts.max():.2f}
 
 
 ####################################################################################################################################################
-################################ Load Data #########################################################################################################
+################################ Load Data and Create Dictionaries #################################################################################
 ####################################################################################################################################################
  
 
@@ -106,7 +106,76 @@ for f in noisy_simlist:
 print(f"✅ Loaded {len(TCF_clean)} clean sims, {len(TCF_noisy)} noisy sims")
 
 
+# checking and plots
+# def inspect_tcf_dict(tcf_dict, name="Dictionary"):
+#     """
+#     Print summary of a TCF dictionary.
+    
+#     Parameters
+#     ----------
+#     tcf_dict : dict
+#         Dictionary with structure {key: {"tcf": array, "rvals": array}}.
+#     name : str
+#         Label for the dictionary in the printout.
+#     """
+#     print(f"\n📂 {name}: {len(tcf_dict)} entries")
+#     for key, dat in tcf_dict.items():
+#         tcf_shape = dat["tcf"].shape if "tcf" in dat else None
+#         r_shape   = dat["rvals"].shape if "rvals" in dat else None
+#         print(f"  {key:25s} → TCF {tcf_shape}, rvals {r_shape}")
+
+
+# inspect_tcf_dict(TCF_clean, "Clean sims")
+# inspect_tcf_dict(TCF_noisy, "Noisy sims (AAstar100)")
+
+# def plot_avg_tcf(tcf_dict, name="Dictionary", keys=None):
+#     """
+#     Plot average TCF vs rvals for selected entries in a TCF dictionary.
+    
+#     Parameters
+#     ----------
+#     tcf_dict : dict
+#         Dictionary with structure {key: {"tcf": array, "rvals": array}}.
+#     name : str
+#         Title for the plot.
+#     keys : list[str] or None
+#         List of keys to plot. If None, plot all entries.
+#     """
+#     plt.figure(figsize=(8, 5))
+    
+#     # default: plot all keys
+#     if keys is None:
+#         keys = list(tcf_dict.keys())
+    
+#     for key in keys:
+#         if key in tcf_dict and "tcf" in tcf_dict[key] and "rvals" in tcf_dict[key]:
+#             avg_tcf = np.mean(tcf_dict[key]["tcf"], axis=0)   # average over realisations
+#             rvals   = tcf_dict[key]["rvals"]
+#             plt.plot(rvals, avg_tcf, label=key)
+#         else:
+#             print(f"⚠️ Skipping {key}: not found or missing data.")
+    
+#     plt.title(f"{name}")
+#     plt.xlabel("r")
+#     plt.ylabel("S(r)")
+#     plt.legend()
+#     plt.grid(True, alpha=0.3)
+#     plt.tight_layout()
+#     plt.show()
+
+    
+# # Plot only HII_EFF_FACTOR ±
+# plot_avg_tcf(TCF_clean, "FID sim", keys=["FID"])
+
+# # Plot everything in noisy dict
+# plot_avg_tcf(TCF_noisy, "Noisy sims (AAstar100)")
+
+
 ####################################################################################################################################################
 ################################ Function to Compute Fisher Forecast ###############################################################################
 ####################################################################################################################################################
- 
+
+
+
+
+
