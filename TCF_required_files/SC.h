@@ -19,14 +19,14 @@ using namespace std;
 static const double pi = 3.141592653589793;
 static const double s3 = sqrt(3.0);
 
-static const int nthreads = 2; //number of threads for parallelisation
+static const int nthreads = 5; //number of threads for parallelisation
 static const int N = 256; //sampling number (pix dimensions of box)
 static const double L = 295.24653085326247; //length of the realspace box in Mpc
-static const string filename_box = "/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1_txtfiles/Lightcone_zidx0/realisation_2"; // don't need the .txt at end of filename  
+static const string filename_box = "/data/cluster/lcrascal/SIM_data/SIM_Tvir_minus/Lightcone_ION_Tvir_MIN_400_Samples_Minus_txtfiles/Lightcone_zidx0/realisation_399"; // don't need the .txt at end of filename  
 
-static const int nbins = 50;//number of bins for correlation scales
+static const int nbins = 100;//number of bins for correlation scales
 static const double rmin = 3.0;
-static const double rmax = 50.0; //min and max value of correlation scales probed in Mpc 
+static const double rmax = 100.0; //min and max value of correlation scales probed in Mpc 
 
 // #define pi (double) 3.141592653589793
 // #define s3 (double) sqrt(3.0)

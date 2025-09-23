@@ -682,15 +682,28 @@ print(" %%%%%%%% RUNNING  FOR AASTAR 100HRS %%%%%%%% ")
 tcf_code_dir = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_required_files"
 
 # your list of H5 files
-mock_h5_1 = Path("/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_1/Lightcone_MOCK_1.h5")
-mock_h5_FID = Path("/data/cluster/lcrascal/SIM_data/mock_tests/Mock_SIM_FID/Lightcone_MOCK_FID.h5")
+SIM_FID = '/data/cluster/lcrascal/SIM_data/SIM_FID/Lightcone_FID_400_Samples.h5'
+
+SIM_HII_plus = '/data/cluster/lcrascal/SIM_data/SIM_HII_plus/Lightcone_HII_EFF_FACTOR_400_Samples_Plus.h5'
+SIM_HII_minus = '/data/cluster/lcrascal/SIM_data/SIM_HII_minus/Lightcone_HII_EFF_FACTOR_400_Samples_Minus.h5'
+
+SIM_Rmax_plus = '/data/cluster/lcrascal/SIM_data/SIM_Rmax_plus/Lightcone_R_BUBBLE_MAX_400_Samples_Plus.h5'  
+SIM_Rmax_minus = '/data/cluster/lcrascal/SIM_data/SIM_Rmax_minus/Lightcone_R_BUBBLE_MAX_400_Samples_Minus.h5'
+
+SIM_Tvir_plus = '/data/cluster/lcrascal/SIM_data/SIM_Tvir_plus/Lightcone_ION_Tvir_MIN_400_Samples_Plus.h5'
+SIM_Tvir_minus = '/data/cluster/lcrascal/SIM_data/SIM_Tvir_minus/Lightcone_ION_Tvir_MIN_400_Samples_Minus.h5'  
 
 
-
-# --- test file list ---
+# --- file list --- #
 simlist = [
-    mock_h5_FID,           # should trigger noise/smoothing path
-    mock_h5_1,             # should follow normal path
+    SIM_FID,           
+    SIM_HII_plus,
+    SIM_HII_minus,
+    SIM_Rmax_plus,
+    SIM_Rmax_minus,
+    SIM_Tvir_plus,
+    SIM_Tvir_minus
+    
 ]
 
 # Call run_all with minimal args
@@ -714,7 +727,7 @@ run_all(
     njobs=1, 
     checkpoint=8, 
     bmax_km=2.0,
-    include_clean=False # XXXXXX
+    include_clean=True # XXXXXX
 )
 
 
