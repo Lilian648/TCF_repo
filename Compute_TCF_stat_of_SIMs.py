@@ -116,7 +116,7 @@ def add_noise_and_smooth_all_realisations(
 
     clean_h5_file = Path(clean_h5_file).resolve()
     stem    = clean_h5_file.stem
-    
+
     # Build noise tag (e.g. "AAstar_1000hrs")
     noise_tag = f"{subarray_type}_{int(obs_time)}hrs"
 
@@ -137,8 +137,12 @@ def add_noise_and_smooth_all_realisations(
     with h5py.File(clean_h5_file, 'r') as f:
         redshifts   = f['redshifts'][...]
         frequencies = f['frequencies'][...]
-        box_length  = float(f['box_length'][...].squeeze())
-        box_dim     = int(np.array(f['ngrid'][...]).squeeze())
+        box_length_Mpc_perh  = float(f['box_length'][...].squeeze()) # Mpc per h
+        h = 0.6774
+        box_length_Mpc = box_length_Mpc_perh/h # Mpc
+        print("box_length_Mpc_perh", box_length_Mpc_perh)
+        print("box_length_Mpc", box_length_Mpc)
+        box_dim     = int(np.array(f['ngrid'][...]).squeeze()) # number of pixels
         ds          = f['brightness_lightcone']      # (n_real, z, x, y)
         n_real, n_z, ny, nx = ds.shape
         assert ny == nx == box_dim, f"Shape mismatch: {ds.shape} vs box_dim={box_dim}"
@@ -154,7 +158,8 @@ def add_noise_and_smooth_all_realisations(
         fout = h5py.File(path, 'w')
         fout.create_dataset("redshifts", data=redshifts)
         fout.create_dataset("frequencies", data=frequencies)
-        fout.create_dataset("box_length", data=np.array([box_length], dtype=np.float64))
+        fout.create_dataset("box_length_Mpc_perh", data=np.array([box_length_Mpc_perh], dtype=np.float64))
+        fout.create_dataset("box_length_Mpc", data=np.array([box_length_Mpc], dtype=np.float64))
         fout.create_dataset("ngrid", data=np.array([box_dim], dtype=np.int64))
         fout.create_dataset("nrealisations", data=np.array([n_real], dtype=np.int64))
         dset = fout.create_dataset(
@@ -201,7 +206,7 @@ def add_noise_and_smooth_all_realisations(
                     int_time=int_time,
                     declination=declination,
                     subarray_type=subarray_type,
-                    boxsize=box_length,
+                    boxsize=box_length_Mpc, # Must be in Mpc
                     verbose=verbose,
                     save_uvmap=str(uvpath),
                     n_jobs=njobs,
@@ -226,9 +231,9 @@ def add_noise_and_smooth_all_realisations(
                 # smooth_lightcone expects (x,y,z), treats axis=2 as z,
                 # returns (x,y,z) and redshifts_used (possibly flipped)
                 obs_xyz, rz_used = t2c.smooth_lightcone(
-                    lightcone=noise_xyz + t2c.subtract_mean_signal(clean_xyz, los_axis=2),
+                    lightcone = noise_xyz + t2c.subtract_mean_signal(clean_xyz, los_axis=2),
                     z_array=redshifts,
-                    box_size_mpc=box_length,
+                    box_size_mpc=box_length_Mpc,
                     max_baseline=bmax_km,
                 )
                 obs_xyz = obs_xyz.astype(np.float32)
@@ -270,10 +275,10 @@ def add_noise_and_smooth_all_realisations(
         "observed_h5": str(obs_out)
     }
 
+
 # example usage
 
 # # --- parameters --- #
-# # 1.  AAstar, 1000hrs 
 # obs_time = 1000.                       # total observation hours
 # total_int_time = 6.                   # hours per day
 # int_time = 10.                        # seconds
