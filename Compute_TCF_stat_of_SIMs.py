@@ -140,8 +140,6 @@ def add_noise_and_smooth_all_realisations(
         box_length_Mpc_perh  = float(f['box_length'][...].squeeze()) # Mpc per h
         h = 0.6774
         box_length_Mpc = box_length_Mpc_perh/h # Mpc
-        print("box_length_Mpc_perh", box_length_Mpc_perh)
-        print("box_length_Mpc", box_length_Mpc)
         box_dim     = int(np.array(f['ngrid'][...]).squeeze()) # number of pixels
         ds          = f['brightness_lightcone']      # (n_real, z, x, y)
         n_real, n_z, ny, nx = ds.shape
@@ -347,8 +345,6 @@ def compute_TCF_of_single_SIM_all_realisations(
     overwrite_txt=False,      # re-extract .txt even if already present
     continue_on_error=False   # skip bad realisations instead of raising
 ):
-
-    h = 0.6774
     
     sim_filepath = Path(sim_filepath).resolve()
     sim_dir = sim_filepath.parent
@@ -371,10 +367,11 @@ def compute_TCF_of_single_SIM_all_realisations(
         if "redshifts" in f:
             assert f["redshifts"].shape[0] == n_freq
         L_Mpc_perh = float(f["box_length"][...].squeeze()) #
-        L = L_Mpc_perh/h # Mpc
+        h = 0.6774
+        L_Mpc = L_Mpc_perh/h # Mpc
         DIM = int(nx)
-        print("L:", L)
-        print("DIM:", DIM)
+        print("L:", L_Mpc, "Mpc")
+        print("DIM:", DIM, "pixels")
 
     # normalize z_indices 
     if z_indices is None:                            # case for all z slices in sim
@@ -401,7 +398,7 @@ def compute_TCF_of_single_SIM_all_realisations(
     # --- TCF Class instance --- #
     tcf = TCF_Class.Compute_TCF(
         tcf_code_dir=str(tcf_code_dir),
-        L=L, DIM=DIM,
+        L=L_Mpc, DIM=DIM,
         nthreads=nthreads, nbins=nbins, rmin=rmin, rmax=rmax
     )
 
@@ -483,6 +480,7 @@ def compute_TCF_of_single_SIM_all_realisations(
             print(f"   ✓ z_idx {z} done in {time.time()-t0:.1f}s")
 
     print(f"✔ All done in {time.time()-t0_all:.1f}s")
+
 
 # example usage
 
@@ -638,8 +636,14 @@ def run_all(
                 })
 
             else:
-                # non-FID sims → just the original
-                sims_to_run = {"Base": sim_path}
+
+                # Non-FID sims
+                if include_clean:
+                    sims_to_run = {"Clean": sim_path}
+                else:
+                    print("  → Skipping non-FID sim entirely (include_clean=False)")
+                    continue  # <- key: do not compute anything for non-FID when include_clean=False
+
 
             # now run TCF for each chosen sim
             for tag, h5file in sims_to_run.items():
@@ -679,11 +683,11 @@ def run_all(
 # example usage
 
 ###############################################
-########## RUNNING FOR AASTAR 100HRS ##########
+########## RUNNING FOR AASTAR 1000HRS ##########
 ###############################################
-print(" %%%%%%%% RUNNING  FOR AASTAR 100HRS %%%%%%%% ")
+print(" %%%%%%%% RUNNING  FOR AASTAR 1000HRS %%%%%%%% ")
 
-# configure once
+# TCF files
 tcf_code_dir = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_required_files"
 
 # your list of H5 files
@@ -711,7 +715,7 @@ simlist = [
     
 ]
 
-# Call run_all with minimal args
+# Call run_all 
 run_all(
     simlist=simlist,
     tcf_code_dir=tcf_code_dir,   
@@ -723,16 +727,16 @@ run_all(
     overwrite_h5=True,
     overwrite_txt=True,
     continue_on_error=True,
-    obs_time=100, # XXXXXX
+    obs_time=1000, # XXXXXX
     total_int_time=6.0, 
     int_time=10.0, 
     declination=-30.0, 
     subarray_type="AAstar", # XXXXXX
-    save_uvmap="/data/cluster/lcrascal/uvmaps/uvmap_AAstar_100hrs.h5",  # XXXXXX
+    save_uvmap="/data/cluster/lcrascal/uvmaps/uvmap_AAstar_1000hrs.h5",  # XXXXXX
     njobs=1, 
     checkpoint=8, 
     bmax_km=2.0,
-    include_clean=True # XXXXXX
+    include_clean=False # XXXXXX
 )
 
 
