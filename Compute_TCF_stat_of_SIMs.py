@@ -116,7 +116,7 @@ def add_noise_and_smooth_all_realisations(
     clean_h5_file = Path(clean_h5_file).resolve()
     stem    = clean_h5_file.stem
 
-    # Build noise tag (e.g. "AAstar_1000hrs")
+    # Build noise tag 
     noise_tag = f"{subarray_type}_{int(obs_time)}hrs"
 
     # Create the output directory: parent / noise_tag
@@ -557,7 +557,7 @@ def get_noise_output_paths(clean_h5_file, subarray_type, obs_time):
     add_noise_and_smooth_all_realisations, without creating them."""
     clean_h5_file = Path(clean_h5_file).resolve()
     stem = clean_h5_file.stem  # e.g. "Lightcone_FID_400_Samples"
-    noise_tag = f"{subarray_type}_{int(obs_time)}hrs"  # e.g. "AA4_1000hrs"
+    noise_tag = f"{subarray_type}_{int(obs_time)}hrs" 
     out_dir = clean_h5_file.parent / noise_tag
     return {
         "noise_only_h5": out_dir / f"{stem}_NOISE_ONLY_LC.h5",
@@ -614,7 +614,7 @@ def run_all(
           f"(from {len(simlist)} provided)\n")
 
     for s_idx, sim_path in enumerate(sims_to_process, start=1):
-        sim_name = sim_path.stem
+        sim_name = Path(sim_path).stem
         print(f"\n========== [{s_idx}/{len(sims_to_process)}] {sim_name} ==========")
         print(f"H5: {sim_path}")
 
@@ -625,10 +625,11 @@ def run_all(
             
                 # Compute expected output paths
                 exp_paths = get_noise_output_paths(sim_path, subarray_type, obs_time)
+                print("exp_paths", exp_paths)
                 exist_map = {k: p.exists() for k, p in exp_paths.items()}
-            
+                        
                 if all(exist_map.values()):
-                    print("  ✔ Found existing noisy H5s → reusing:")
+                    print("  Found existing noisy H5s → reusing:")
                     for k, p in exp_paths.items():
                         print(f"    - {k}: {p}")
                     # Prepare mapping exactly like add_noise_and_smooth_all_realisations returns
@@ -636,7 +637,9 @@ def run_all(
                 else:
                     # If partially present, you can decide to regenerate all (simplest & safest)
                     if any(exist_map.values()):
-                        print("  Partially present noisy outputs detected; regenerating all three to ensure consistency.")
+                        print(" Partially present noisy outputs detected; regenerating all three to ensure consistency.")
+                    else:
+                        print(" No noisy H5s found → generating them now.")
         
 
                     # generate noise variants
