@@ -6,7 +6,6 @@ import re, time
 from datetime import datetime
 import tools21cm as t2c
 
-
 import TCF_Class
 
 ####################################################################################################################################################
@@ -156,7 +155,7 @@ def add_noise_and_smooth_all_realisations(
         fout = h5py.File(path, 'w')
         fout.create_dataset("redshifts", data=redshifts)
         fout.create_dataset("frequencies", data=frequencies)
-        fout.create_dataset("box_length_Mpc_perh", data=np.array([box_length_Mpc_perh], dtype=np.float64))
+        fout.create_dataset("box_length", data=np.array([box_length_Mpc_perh], dtype=np.float64))
         fout.create_dataset("box_length_Mpc", data=np.array([box_length_Mpc], dtype=np.float64))
         fout.create_dataset("ngrid", data=np.array([box_dim], dtype=np.int64))
         fout.create_dataset("nrealisations", data=np.array([n_real], dtype=np.int64))
@@ -553,9 +552,19 @@ def compute_TCF_of_single_SIM_all_realisations(
 ################################ Compute TCF of all SIMs ###########################################################################################
 ####################################################################################################################################################
 
+def get_noise_output_paths(clean_h5_file, subarray_type, obs_time):
+    """Return expected paths for the 3 noisy outputs created by
+    add_noise_and_smooth_all_realisations, without creating them."""
+    clean_h5_file = Path(clean_h5_file).resolve()
+    stem = clean_h5_file.stem  # e.g. "Lightcone_FID_400_Samples"
+    noise_tag = f"{subarray_type}_{int(obs_time)}hrs"  # e.g. "AA4_1000hrs"
+    out_dir = clean_h5_file.parent / noise_tag
+    return {
+        "noise_only_h5": out_dir / f"{stem}_NOISE_ONLY_LC.h5",
+        "noisy_h5":      out_dir / f"{stem}_NOISE.h5",
+        "observed_h5":   out_dir / f"{stem}_NOISE_SMOOTHING.h5",
+    }
 
-import time, h5py
-from pathlib import Path
 
 def run_all(
     simlist,
@@ -595,32 +604,55 @@ def run_all(
     """
     simlist = [Path(p).resolve() for p in simlist]
 
+    if include_clean:
+        sims_to_process = simlist
+    else:
+        sims_to_process = [p for p in simlist if "FID" in p.stem]
+    
     t0_all = time.time()
-    print(f" Starting TCF run for {len(simlist)} sims\n")
+    print(f" Starting TCF run for {len(sims_to_process)} sims "
+          f"(from {len(simlist)} provided)\n")
 
-    for s_idx, sim_path in enumerate(simlist, start=1):
+    for s_idx, sim_path in enumerate(sims_to_process, start=1):
         sim_name = sim_path.stem
-        print(f"\n========== [{s_idx}/{len(simlist)}] {sim_name} ==========")
+        print(f"\n========== [{s_idx}/{len(sims_to_process)}] {sim_name} ==========")
         print(f"H5: {sim_path}")
 
         try:
-            if "FID" in sim_name:
-                print(" Detected FID sim → adding noise/smoothing variants")
 
-                # generate noise variants
-                outfiles = add_noise_and_smooth_all_realisations(
-                    clean_h5_file=sim_path,
-                    obs_time=obs_time,
-                    total_int_time=total_int_time,
-                    int_time=int_time,
-                    declination=declination,
-                    subarray_type=subarray_type,
-                    verbose=True,
-                    save_uvmap=save_uvmap,
-                    njobs=njobs,
-                    checkpoint=checkpoint,
-                    bmax_km=bmax_km,
-                )
+            if "FID" in sim_name:
+                print(" Detected FID sim → adding noise/smoothing variants (or reusing if present)")
+            
+                # Compute expected output paths
+                exp_paths = get_noise_output_paths(sim_path, subarray_type, obs_time)
+                exist_map = {k: p.exists() for k, p in exp_paths.items()}
+            
+                if all(exist_map.values()):
+                    print("  ✔ Found existing noisy H5s → reusing:")
+                    for k, p in exp_paths.items():
+                        print(f"    - {k}: {p}")
+                    # Prepare mapping exactly like add_noise_and_smooth_all_realisations returns
+                    outfiles = {k: str(p) for k, p in exp_paths.items()}
+                else:
+                    # If partially present, you can decide to regenerate all (simplest & safest)
+                    if any(exist_map.values()):
+                        print("  Partially present noisy outputs detected; regenerating all three to ensure consistency.")
+        
+
+                    # generate noise variants
+                    outfiles = add_noise_and_smooth_all_realisations(
+                        clean_h5_file=sim_path,
+                        obs_time=obs_time,
+                        total_int_time=total_int_time,
+                        int_time=int_time,
+                        declination=declination,
+                        subarray_type=subarray_type,
+                        verbose=True,
+                        save_uvmap=save_uvmap,
+                        njobs=njobs,
+                        checkpoint=checkpoint,
+                        bmax_km=bmax_km,
+                    )
 
                 # collect all four sims (clean + 3 variants)
                 sims_to_run = {}
