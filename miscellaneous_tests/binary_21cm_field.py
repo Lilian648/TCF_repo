@@ -41,7 +41,11 @@ def convert_21cm_to_binary_field(input_dir):
         
         # Convert to binary (non-zero → 1)
         min_val = np.min(field)
-        binary_field = np.where(field != min_val, 1, 0)
+        binary_field = np.where(field != min_val, 1, min_val)
+
+        # de-mean field again
+        mean_binary = np.mean(binary_field)
+        binary_field = binary_field - mean_binary
         
         # Define new filename: add 'Binary_' prefix
         output_name = f"Binary_{file_path.name}"
