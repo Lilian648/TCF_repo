@@ -52,7 +52,7 @@ def convert_21cm_to_binary_field(input_dir):
         output_path = input_dir / output_name
         
         # Save binary field
-        np.savetxt(output_path, binary_field, fmt="%d")
+        np.savetxt(output_path, binary_field, fmt="%.8e")
         
         print(f" Saved: {output_path.name}")
     
