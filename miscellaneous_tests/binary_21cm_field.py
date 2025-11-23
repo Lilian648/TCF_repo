@@ -5,6 +5,7 @@ Author: Liliane (PhD — EoR / TCF Pipeline)
 
 DESCRIPTION
 -----------
+
 Goal: To determine which features of the TCF result originate from the morphology of ionised 
 bubbles, and which arise from the underlying large-scale structure (i.e., density-driven 
 background fluctuations).
