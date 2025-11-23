@@ -5,6 +5,11 @@ Author: Liliane (PhD — EoR / TCF Pipeline)
 
 DESCRIPTION
 -----------
+
+Goal: To determine which features of the TCF result originate from the morphology of ionised 
+bubbles, and which arise from the underlying large-scale structure (i.e., density-driven 
+background fluctuations).
+
 This script takes 21cmFAST-like mock simulation fields (stored as 2D text slices), converts them 
 into binary ionisation-like fields, computes the Triangle Correlation Function (TCF) for each 
 binary realisation using the external C++ TCF code (SC.h / SC_2d.o), and finally plots the ensemble 
