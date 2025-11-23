@@ -1,3 +1,85 @@
+"""
+====================================================================================================
+Script: Compute Binary-Field TCFs from 21cmFAST Mock Simulation
+Author: Liliane (PhD — EoR / TCF Pipeline)
+
+DESCRIPTION
+-----------
+This script takes 21cmFAST-like mock simulation fields (stored as 2D text slices), converts them 
+into binary ionisation-like fields, computes the Triangle Correlation Function (TCF) for each 
+binary realisation using the external C++ TCF code (SC.h / SC_2d.o), and finally plots the ensemble 
+of TCFs (all realisations + mean + ±1σ band) for a quick visual “Binary Field Morphology Test”.
+
+The script is structured in three major phases:
+
+----------------------------------------------------------------------------------------------------
+PHASE 1 — Convert original 21cm slices into binary fields
+----------------------------------------------------------------------------------------------------
+• Input: A folder containing many `realisation_X.txt` files (brightness temperature slices).
+• For each file:
+    - Load the 2D field.
+    - Convert it to a binary field:
+          value != min(field) → 1
+          value == min(field) → min(field)  (usually 0)
+    - De-mean the resulting binary field.
+    - Save it back to the same directory as `Binary_realisation_X.txt`.
+
+Purpose:
+Binary fields mimic ionisation masks (0/1 fields) and allow comparison with analytic and mock-bubble
+theories. De-meaning ensures the TCF code receives a mean-zero field (required for correct behaviour).
+
+----------------------------------------------------------------------------------------------------
+PHASE 2 — Compute the TCF for each binary field
+----------------------------------------------------------------------------------------------------
+• Load simulation metadata from the original HDF5 simulation:
+    - Box size in Mpc/h → converted to Mpc.
+    - Grid dimension (DIM).
+• Configure global TCF parameters:
+    - nbins, rmin, rmax, nthreads, L (Mpc), DIM (pixels).
+• Create a `Compute_TCF` class instance from `TCF_Class`, which:
+    - Updates SC.h with global parameters (L, N, nbins, etc.).
+    - For each field, rewrites the filename inside SC.h.
+    - Compiles and runs `SC_2d.o` via `make`.
+    - Reads the resulting spherical correlations into a pandas DataFrame.
+
+• Loop over all `Binary_realisation_X.txt` files:
+    - Compute the TCF.
+    - Store each result in a dictionary keyed by the field name.
+
+• Save all TCF results for the binary fields into a single pickle file:
+      TCF_results_Binary_field.pkl
+  (mapping filename → DataFrame with columns: r, Re_s(r), Im_s(r), N_modes)
+
+----------------------------------------------------------------------------------------------------
+PHASE 3 — Plot the Binary Field TCF Ensemble (Binary Field Morphology Test)
+----------------------------------------------------------------------------------------------------
+• Load `TCF_results_Binary_field.pkl`.
+• Stack Re[s(r)] for all binary realisations.
+• Compute:
+    - The mean TCF across realisations.
+    - The standard deviation at each r (for an error band).
+• Create a diagnostic plot showing:
+    - Thin grey line for each individual realisation.
+    - Thick coloured line for the mean Re[s(r)].
+    - A shaded ±1σ band around the mean.
+
+• The plot is titled:
+      "Binary Field Morphology Test — TCF Ensemble (Mean ± 1σ)"
+  and can be saved as:
+      plots_TCF_binary_field/TCF_ensemble_Binary_field.png
+  (saving is controlled by commenting/uncommenting the `plt.savefig(...)` line).
+
+Purpose:
+This final plot provides a quick visual check of the morphology encoded in the binary fields as seen 
+by the TCF: how consistent the realisations are, the typical amplitude and shape of Re[s(r)], and the 
+spread across the ensemble.
+
+
+====================================================================================================
+"""
+
+
+
 import os
 import numpy as np
 import h5py
@@ -139,3 +221,76 @@ with open(out_pkl, "wb") as f:
 print(f" Saved all TCF results to: {out_pkl}")
 
 
+
+
+####################################################################################################
+########################## Plot TCFs of Binary Fields (Mean + ±1σ + Realisations) ##################
+####################################################################################################
+
+print("\n=============== Plotting Binary Field TCF Ensemble ===============")
+
+# --- Path to the saved pickle file ---
+pkl_path = out_pkl
+
+# --- Load results dictionary from pickle ---
+with open(pkl_path, "rb") as f:
+    results_dict = pkl.load(f)
+
+print(f"Loaded {len(results_dict)} TCF realisations from:\n  {pkl_path}")
+
+# --- Sort dictionary entries for reproducibility ---
+items = sorted(results_dict.items())
+
+# --- Extract r grid (from the first TCF) ---
+first_name, first_df = items[0]
+r = first_df["r"].values
+
+# --- Stack Re[s(r)] values ---
+Re_all = []
+
+for name, df in items:
+    if not np.allclose(df["r"].values, r):
+        raise ValueError(f"❌ r-grid mismatch in file: {name}")
+    Re_all.append(df["Re_s_r"].values)
+
+Re_all = np.vstack(Re_all)        # shape = (n_realisations, n_r)
+mean_Re = Re_all.mean(axis=0)     # mean across slices
+std_Re  = Re_all.std(axis=0)      # standard deviation
+
+
+# --- Plotting ---
+plt.figure(figsize=(7, 5))
+
+# 1) Plot all realisations (light grey)
+for arr in Re_all:
+    plt.plot(r, arr, color="gray", alpha=0.25, linewidth=0.8)
+
+# 2) Plot mean
+plt.plot(r, mean_Re, color="C0", linewidth=2, label="Mean Re[s(r)]")
+
+# 3) Plot ±1σ error band
+plt.fill_between(
+    r,
+    mean_Re - std_Re,
+    mean_Re + std_Re,
+    color="C0",
+    alpha=0.3,
+    label="±1σ"
+)
+
+plt.xlabel("r (Mpc)")
+plt.ylabel("Re[s(r)]")
+plt.title("Binary Field Morphology Test\nTCF Ensemble (Mean ± 1σ)")
+plt.grid(alpha=0.3)
+plt.legend()
+plt.tight_layout()
+
+# --- Prepare output directory ---
+plots_dir = pkl_path.parent / "plots_TCF_binary_field"
+plots_dir.mkdir(parents=True, exist_ok=True)
+save_path = plots_dir / "TCF_ensemble_Binary_field.png"
+
+#plt.savefig(save_path, dpi=200, bbox_inches="tight") # uncomment to save
+plt.close()
+
+#print(f"✅ Saved TCF plot to:\n  {save_path}\n")
