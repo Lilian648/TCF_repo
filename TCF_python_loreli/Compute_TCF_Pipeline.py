@@ -362,111 +362,92 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
 
 
 
-
-
-
-
 ################################################################################################################################################
-#################################### Creating Noise lightcone ##################################################################################
+#################################### Adding Noise + Smoothing to Clean Slice ###################################################################
 ################################################################################################################################################
 
 
 
-
-def create_noise_slice(uvmap_filename, sim_params, noise_params):
+def make_observed_2Dslice(
+    clean_xy,
+    redshift,
+    box_length_Mpc,
+    noise_params,
+    uvmap_filename,
+    bmax_km,
+):
     """
-    Create a single 2D thermal-noise slice using tools21cm.noise_lightcone
-    with a single redshift channel.
-
-    Parameters
-    ----------
-    uvmap_filename : str or Path
-        Path to uvmap file (tools21cm will reuse/save it).
-    sim_params : dict
-        Must contain:
-            - "redshift" (float)
-            - "box_length_Mpc" (float)
-            - "box_dim" (int)  # ncells
-    noise_params : dict
-        Must contain:
-            - "obs_time", 
-            - "total_int_time", 
-            - "int_time"
-            - "declination",
-            - "subarray_type"
-        Optional:
-            - "verbose" (bool, default False)
-            - "njobs" (int, default 1)
-            - "checkpoint" (bool, default False)
+    Create an 'observed' 2D slice: clean + noise, then instrument smoothing.
 
     Returns
     -------
-    noise_xy : ndarray, shape (N, N)
-        2D noise realisation.
+    noisy_xy : (N,N) clean+noise
+    obs_xy   : (N,N) smoothed version
     """
-    # --- unpack inputs ---
-    redshift = sim_params["redshift"]
-    box_length_Mpc = float(sim_params["box_length_Mpc"])
-    box_dim = int(sim_params["box_dim"])
+    N = clean_xy.shape[0]
 
-    obs_time = noise_params["obs_time"]
-    total_int_time = noise_params["total_int_time"]
-    int_time = noise_params["int_time"]
-    declination = noise_params["declination"]
-    subarray_type = noise_params["subarray_type"]
+    sim_params = {"redshift": float(redshift), "box_length_Mpc": float(box_length_Mpc), "box_dim": int(N)}
 
-    verbose = bool(noise_params.get("verbose", False))
-    njobs = int(noise_params.get("njobs", 1))
-    checkpoint = noise_params.get("checkpoint", False)
+    # --- make 3-channel noise so smooth_lightcone is happy ---
+    dz = 1e-3
+    zs = np.array([redshift - dz, redshift, redshift + dz], dtype=float)
 
-    # --- uvmap path handling ---
-    uvpath = Path(uvmap_filename)
-    uvpath.parent.mkdir(parents=True, exist_ok=True)
-    if verbose:
-        print(f"{'Reusing' if uvpath.exists() else 'Will save'} UV map at: {uvpath}")
-
-    # --- generate noise lightcone with ONE redshift channel ---
-    zs = [redshift, redshift+1e-3]
-    noise_xyz = t2c.noise_lightcone(
-        ncells=box_dim,
+    # generate 3-channel noise (x,y,zchan)
+    noiseonly_xyz = t2c.noise_lightcone(
+        ncells=N,
         zs=zs,
-        obs_time=obs_time,
-        total_int_time=total_int_time,
-        int_time=int_time,
-        declination=declination,
-        subarray_type=subarray_type,
+        obs_time=noise_params["obs_time"],
+        total_int_time=noise_params["total_int_time"],
+        int_time=noise_params["int_time"],
+        declination=noise_params["declination"],
+        subarray_type=noise_params["subarray_type"],
         boxsize=box_length_Mpc,
-        verbose=verbose,
-        save_uvmap=str(uvpath),
-        n_jobs=njobs,
-        checkpoint=checkpoint,
-    )
+        verbose=bool(noise_params.get("verbose", False)),
+        save_uvmap=str(uvmap_filename),
+        n_jobs=int(noise_params.get("njobs", 1)),
+        checkpoint=noise_params.get("checkpoint", False),
+    ).astype(np.float32)
 
-    noise_slice = noise_xyz[:, :, 0]
-    
-    return noise_slice
+    noiseonly_xy = noiseonly_xyz[:, :, 1]
+
+    # embed clean slice into 3 channels (repeat same map)
+    clean_xyz = np.repeat(clean_xy[:, :, None], 3, axis=2).astype(np.float32)
+
+    noisy_xyz = clean_xyz + noiseonly_xyz
+    noisy_xy = noisy_xyz[:, :, 1]  # take the central channel as your target-z result
+
+    obs_xyz, zs_used = t2c.smooth_lightcone(
+        lightcone=noisy_xyz,
+        z_array=zs,
+        box_size_mpc=box_length_Mpc,
+        max_baseline=bmax_km,
+    )
+    obs_xyz = obs_xyz.astype(np.float32)
+
+    obs_xy = obs_xyz[:, :, 1]  # again take central channel
+
+    return noiseonly_xy, noisy_xy, obs_xy
 
 
 # testing
+
+
+clean_xy = np.load("tests/mock_LoReLi_sim_N64.npy")[:, :, 0]
 
 obs_time = 1000.                      # total observation hours
 total_int_time = 6.                   # hours per day
 int_time = 10.                        # seconds
 declination = -30.0                   # declination of the field in degrees
 subarray_type = "AA4"
-#bmax_km = 2. #* units.km # km needed for smoothibg
-
-verbose = True
-uvmap_filename = "tests/uvmap_mock.h5"
 njobs = 1
-checkpoint = 16
+checpoints = 16
+bmax_km = 2. #* units.km # km needed for smoothibg
 
-sim_params = {
-    "redshift": 6.0,
-    "box_length_Mpc": 296.0/4.0,  # 1/4 of the full sim size
-    "box_dim": 64,
-}
-print(type(sim_params["redshift"]))
+uvmap_filename = "tests/uvmap_mock.h5"
+
+redshift = 6.0
+box_length_Mpc = 296.0/4.0  # 1/4 of the full sim size
+box_dim = 64
 
 noise_params = {
     "obs_time": 1000.0,         # total observation hours
@@ -479,4 +460,10 @@ noise_params = {
     "checkpoint": 16,
 }
 
-noise_slice = create_noise_slice(uvmap_filename, sim_params, noise_params)
+noiseonly_xy, noisy_xy, obs_xy = make_observed_2Dslice(
+    clean_xy,
+    redshift,
+    box_length_Mpc,
+    noise_params,
+    uvmap_filename,
+    bmax_km)
