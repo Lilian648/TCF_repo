@@ -281,8 +281,8 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
     # 4. Compute TCF for each slice file
     # ----------------------------
     tcf_files = []
+    tstart = time.time()
     for index, slice_file in enumerate(saved_files):
-        tstart = time.time()
         
         print(f"Realisation {index+1}/{len(saved_files)}")
         slice_path = Path(slice_file)
@@ -299,8 +299,9 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
 
         nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
         tcf_files.append(str(out_path))
-        tend = time.time()
-        print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
+        
+    tend = time.time()
+    print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
 
     # ----------------------------
     # 5) Load all TCF result files and make mean + 1σ band plot
