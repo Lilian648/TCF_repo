@@ -175,7 +175,7 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
     sr_vals = np.zeros(len(rvals))
     nmodes = np.zeros(len(rvals))
     for i, r in enumerate(rvals):
-        print(f" loop {i+1}/{len(rvals)}")
+        print(f" computing TCF for rval={i+1}/{len(rvals)}")
         nmodes[i], sr_vals[i] = tcf(r, Bk, L, ndim)
 
     print("computing tcf ended")
@@ -203,73 +203,149 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
 # currently incomplete - will put into main() function soon
 ################################################################################################################################################
 
+def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=False):
 
-##### load sim #####
-print("loading sim")
-
-sn = '10038'
-base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
-
-sim = Cat(sn,
-    redshift_range='all', #[sim.z.min(), sim.z.max()]
-    skip_early=False,
-    path_spectra='spectra',
-    path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes',
-    base_dir=base_dir,
-    load_params=False,
-    load_spectra=False,
-    just_Pee=True,
-    reinitialise_spectra=False,
-    save_spectra=False,
-    load_density_cubes=False,
-    load_xion_cubes=False,
-    load_T21cm_cubes=True,
-    verbose=True,
-    debug=False)
-
-##### extract all 2D slices along z axis #####
-
-print("extracting z slices")
-
-# choose which redshift cube to use
-cube_z6_idx = np.abs(sim.z - 6).argmin()
-print(cube_z6_idx)
+    """
+    CHANGES TO BE MADE:
+        - want to define the output directory within the function so that it has the correct info in the folder names
 
 
-cube_z6 = sim.T21cm[37]  # shape (256, 256, 256)
+    
+    GOAL: Run the LoReLi -> slices -> TCF pipeline for one simulation.
 
-out_dir = "tests/sn10038_txtfiles/zidx_37/"  
-saved_files = extract_LoReLi_slices_every_dMpc(
-    cube_3d=cube_z6,
-    output_dir=out_dir,
-    box_size_mpc=296.0,
-    delta_mpc=10.0,
-    axis="z",      # or "x" / "y" if you prefer
-    demean=True
-)
+    Parameters
+    ----------
+    sim_name : str
+        LoReLi simulation identifier (e.g. "10038").
+    rvals : array_like
+        1D array of r values (Mpc) at which to compute the TCF.
+    out_dir : str
+        Directory where slice txt files and TCF result txt files will be saved.
+    delta_mpc : float
+        Physical spacing (Mpc) between extracted slices.
+    z_target : float
+        Target redshift; the cube closest to this redshift is used.
+    overwrite_tcf : bool
+        If True, recompute TCF results even if the output file already exists.
+
+    Outputs
+    -------
+    - Slice files:       out_dir/slice_axis{axis}_idx{...}_r{...}Mpc.txt
+    - TCF result files:  same name with suffix _TCFresult.txt
+    - Summary plot:      out_dir/TCF_mean_z{z_target}.png
+    """
+    
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rvals = np.asarray(rvals, dtype=float)
 
 
-##### compute TCF of single 2D slice #####
+    # ----------------------------
+    # 1. Load sim
+    # ----------------------------
+    # base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
 
-print("computing TCF")
+    # sim = Cat(sim_name,redshift_range='all', skip_early=False, path_spectra='spectra', path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes', 
+    #           base_dir=base_dir, load_params=False, load_spectra=False, just_Pee=True, reinitialise_spectra=False, save_spectra=False, 
+    #           load_density_cubes=False, load_xion_cubes=False, load_T21cm_cubes=True, verbose=True, debug=False)
 
-field2d = np.loadtxt("tests/sn10038_txtfiles/zidx_37/slice_axis2_idx0_r0Mpc_SMALL.txt")
-L = sim.box_size
+    # # sim params
+    # L = sim.box_size # Mpc (check units?)
+    
+    # ----------------------------
+    # 2. Choose redshift cube 
+    # (eg, choosing cube closest to z=6)
+    # ---------------------------- 
+    # z_idx = np.abs(sim.z - z_target).argmin()
+    # z_used = float(sim.z[z_idx])
+    # cube = sim.T21cm[z_idx]  # expected shape (N,N,N)
+
+    #################################################################################
+    ######################## TESTING VERSION (smaller cube) #########################
+    #################################################################################
+    cube = np.load(sim_name) # a 3d cube array (NOT the loreli sim object)
+    L = 296/4
+
+    # ----------------------------
+    # 3. Extract slices for all axes
+    # (all three axes - will all save to save folder with indication of axis in filename)
+    # ---------------------------- 
+    saved_files = []
+    axes = ["x", "y", "z"]
+    for ax in axes:
+        saved_files += extract_LoReLi_slices_every_dMpc(cube_3d=cube, output_dir=out_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
+                                                        axis=ax, demean=True)
+
+
+    # ----------------------------
+    # 4. Compute TCF for each slice file
+    # ----------------------------
+    tcf_files = []
+    for index, slice_file in enumerate(saved_files):
+        tstart = time.time()
+        
+        print(f"Realisation {index+1}/{len(saved_files)}")
+        slice_path = Path(slice_file)
+
+        # Output naming: same file name + _TCFresult before extension
+        out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
+
+        if out_path.exists() and not overwrite_tcf:
+            print(f"  ↪ Skipping existing TCF: {out_path}")
+            tcf_files.append(str(out_path))
+            continue
+
+        field2d = np.loadtxt(slice_path)
+
+        nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
+        tcf_files.append(str(out_path))
+        tend = time.time()
+        print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
+
+    # ----------------------------
+    # 5) Load all TCF result files and make mean + 1σ band plot
+    # ----------------------------
+    # If you prefer, you can use `tcf_files` directly; glob is handy if you rerun later.
+    tcf_files = sorted(out_dir.glob("*_TCFresult.txt"))
+
+    if len(tcf_files) == 0:
+        raise RuntimeError(f"No *_TCFresult.txt files found in {out_dir}")
+
+    sr_stack = []
+    for f in tcf_files:
+        data = np.loadtxt(f)
+        # file columns: nmodes, s(r), r  (as you save them)
+        s = data[:, 1]
+        r = data[:, 2]
+        sr_stack.append(s)
+
+    sr_stack = np.vstack(sr_stack)              # shape (Nslices, Nr)
+    sr_mean = sr_stack.mean(axis=0)
+    sr_std = sr_stack.std(axis=0, ddof=1) if sr_stack.shape[0] > 1 else np.zeros_like(sr_mean)
+
+    # plot
+    plt.figure()
+    plt.plot(rvals, sr_mean, label=f"mean over {sr_stack.shape[0]} slices")
+    plt.fill_between(rvals, sr_mean - sr_std, sr_mean + sr_std, alpha=0.3, label="±1σ")
+    plt.xlabel("r [Mpc]")
+    plt.ylabel("s(r)")
+    plt.title(f"LoReLi {sim_name}: TCF mean (z≈{sim.z[z_used]:.2f})")
+    plt.legend()
+    plt.tight_layout()
+
+    plot_path = out_dir / f"TCF_plt_z{str(z_used).replace('.','p')}.png"
+    plt.savefig(plot_path, dpi=200)
+    plt.close()
+
+    print(f"\n Done. Saved mean plot: {plot_path}")
+    return {
+        "z_idx": z_idx,
+        "z_used": float(sim.z[z_idx]),
+        "slice_files": saved_files,
+        "tcf_files": [str(p) for p in tcf_files],
+    }
+
+sim_name = "mock_LoReLi_sim_N64.npy"
 rvals = np.linspace(2, 50, 49)
-outfile = "tests/sn10038_txtfiles/zidx_37/slice_axis2_idx0_r0Mpc_TCFresult.txt"
+results = TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=True)
 
-nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, outfile)
-
-##### plot TCF and real field image #####
-
-plt.plot(rvals, sr)
-plt.title("TCF of 2Dslice, cut to size 64x64")
-plt.savefig("tests/sn10038_txtfiles/zidx_37/slice_axis2_idx0_r0Mpc_TCFresult_Plot.png")
-plt.show()
-
-data = np.clip(field2d, np.min(field2d), 50)
-plt.imshow(data)
-plt.colorbar(extend="max")
-plt.title("real field image, cut to size 64x64")
-plt.savefig("tests/sn10038_txtfiles/zidx_37/slice_axis2_idx0_r0Mpc_FieldImage.png")
-plt.show()
