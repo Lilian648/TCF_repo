@@ -36,6 +36,9 @@ import math
 import matplotlib.patheffects as pe
 import pickle as pkl
 import time
+import h5py
+
+import tools21cm as t2c
 
 
 ################################################################################################################################################
@@ -239,6 +242,8 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
     out_dir.mkdir(parents=True, exist_ok=True)
     rvals = np.asarray(rvals, dtype=float)
 
+    print("CHECKING GRAPHS")
+
 
     # ----------------------------
     # 1. Load sim
@@ -270,38 +275,38 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
     # 3. Extract slices for all axes
     # (all three axes - will all save to save folder with indication of axis in filename)
     # ---------------------------- 
-    saved_files = []
-    axes = ["x", "y", "z"]
-    for ax in axes:
-        saved_files += extract_LoReLi_slices_every_dMpc(cube_3d=cube, output_dir=out_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
-                                                        axis=ax, demean=True)
+    # saved_files = []
+    # axes = ["x", "y", "z"]
+    # for ax in axes:
+    #     saved_files += extract_LoReLi_slices_every_dMpc(cube_3d=cube, output_dir=out_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
+    #                                                     axis=ax, demean=True)
 
 
-    # ----------------------------
-    # 4. Compute TCF for each slice file
-    # ----------------------------
-    tcf_files = []
-    tstart = time.time()
-    for index, slice_file in enumerate(saved_files):
+    # # ----------------------------
+    # # 4. Compute TCF for each slice file
+    # # ----------------------------
+    # tcf_files = []
+    # tstart = time.time()
+    # for index, slice_file in enumerate(saved_files):
         
-        print(f"Realisation {index+1}/{len(saved_files)}")
-        slice_path = Path(slice_file)
+    #     print(f"Realisation {index+1}/{len(saved_files)}")
+    #     slice_path = Path(slice_file)
 
-        # Output naming: same file name + _TCFresult before extension
-        out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
+    #     # Output naming: same file name + _TCFresult before extension
+    #     out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
 
-        if out_path.exists() and not overwrite_tcf:
-            print(f"  ↪ Skipping existing TCF: {out_path}")
-            tcf_files.append(str(out_path))
-            continue
+    #     if out_path.exists() and not overwrite_tcf:
+    #         print(f"  ↪ Skipping existing TCF: {out_path}")
+    #         tcf_files.append(str(out_path))
+    #         continue
 
-        field2d = np.loadtxt(slice_path)
+    #     field2d = np.loadtxt(slice_path)
 
-        nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
-        tcf_files.append(str(out_path))
+    #     nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
+    #     tcf_files.append(str(out_path))
         
-    tend = time.time()
-    print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
+    # tend = time.time()
+    # print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
 
     # ----------------------------
     # 5) Load all TCF result files and make mean + 1σ band plot
@@ -330,23 +335,148 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
     plt.fill_between(rvals, sr_mean - sr_std, sr_mean + sr_std, alpha=0.3, label="±1σ")
     plt.xlabel("r [Mpc]")
     plt.ylabel("s(r)")
-    plt.title(f"LoReLi {sim_name}: TCF mean (z≈{sim.z[z_used]:.2f})")
+    #plt.title(f"LoReLi {sim_name}: TCF mean (z≈{sim.z[z_used]:.2f})") NON-TEST VERSION
+    plt.title(f"LoReLi mock: TCF mean (z≈6)")  ## XXXXX
     plt.legend()
     plt.tight_layout()
 
+    z_used = 6  ## XXXXX
     plot_path = out_dir / f"TCF_plt_z{str(z_used).replace('.','p')}.png"
     plt.savefig(plot_path, dpi=200)
     plt.close()
 
     print(f"\n Done. Saved mean plot: {plot_path}")
+    z_idx = 37 ## XXXXX
     return {
         "z_idx": z_idx,
-        "z_used": float(sim.z[z_idx]),
-        "slice_files": saved_files,
+        #"z_used": float(sim.z[z_idx]),
+        #"slice_files": saved_files,
         "tcf_files": [str(p) for p in tcf_files],
     }
 
-sim_name = "mock_LoReLi_sim_N64.npy"
-rvals = np.linspace(2, 50, 49)
-results = TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=True)
+# sim_name = "mock_LoReLi_sim_N64.npy"
+# rvals = np.linspace(2, 50, 49)
+# results = TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=True)
 
+
+
+
+
+
+
+
+
+################################################################################################################################################
+#################################### Creating Noise lightcone ##################################################################################
+################################################################################################################################################
+
+
+
+
+def create_noise_slice(uvmap_filename, sim_params, noise_params):
+    """
+    Create a single 2D thermal-noise slice using tools21cm.noise_lightcone
+    with a single redshift channel.
+
+    Parameters
+    ----------
+    uvmap_filename : str or Path
+        Path to uvmap file (tools21cm will reuse/save it).
+    sim_params : dict
+        Must contain:
+            - "redshift" (float)
+            - "box_length_Mpc" (float)
+            - "box_dim" (int)  # ncells
+    noise_params : dict
+        Must contain:
+            - "obs_time", 
+            - "total_int_time", 
+            - "int_time"
+            - "declination",
+            - "subarray_type"
+        Optional:
+            - "verbose" (bool, default False)
+            - "njobs" (int, default 1)
+            - "checkpoint" (bool, default False)
+
+    Returns
+    -------
+    noise_xy : ndarray, shape (N, N)
+        2D noise realisation.
+    """
+    # --- unpack inputs ---
+    redshift = sim_params["redshift"]
+    box_length_Mpc = float(sim_params["box_length_Mpc"])
+    box_dim = int(sim_params["box_dim"])
+
+    obs_time = noise_params["obs_time"]
+    total_int_time = noise_params["total_int_time"]
+    int_time = noise_params["int_time"]
+    declination = noise_params["declination"]
+    subarray_type = noise_params["subarray_type"]
+
+    verbose = bool(noise_params.get("verbose", False))
+    njobs = int(noise_params.get("njobs", 1))
+    checkpoint = noise_params.get("checkpoint", False)
+
+    # --- uvmap path handling ---
+    uvpath = Path(uvmap_filename)
+    uvpath.parent.mkdir(parents=True, exist_ok=True)
+    if verbose:
+        print(f"{'Reusing' if uvpath.exists() else 'Will save'} UV map at: {uvpath}")
+
+    # --- generate noise lightcone with ONE redshift channel ---
+    zs = [redshift, redshift+1e-3]
+    noise_xyz = t2c.noise_lightcone(
+        ncells=box_dim,
+        zs=zs,
+        obs_time=obs_time,
+        total_int_time=total_int_time,
+        int_time=int_time,
+        declination=declination,
+        subarray_type=subarray_type,
+        boxsize=box_length_Mpc,
+        verbose=verbose,
+        save_uvmap=str(uvpath),
+        n_jobs=njobs,
+        checkpoint=checkpoint,
+    )
+
+    noise_slice = noise_xyz[:, :, 0]
+    
+    return noise_slice
+
+
+# testing
+
+obs_time = 1000.                      # total observation hours
+total_int_time = 6.                   # hours per day
+int_time = 10.                        # seconds
+declination = -30.0                   # declination of the field in degrees
+subarray_type = "AA4"
+#bmax_km = 2. #* units.km # km needed for smoothibg
+
+verbose = True
+uvmap_filename = "tests/uvmap_mock.h5"
+njobs = 1
+checkpoint = 16
+
+sim_params = {
+    "redshift": 6.0,
+    "box_length_Mpc": 296.0/4.0,  # 1/4 of the full sim size
+    "box_dim": 64,
+}
+print(type(sim_params["redshift"]))
+
+noise_params = {
+    "obs_time": 1000.0,         # total observation hours
+    "total_int_time": 6.0,      # hours per day
+    "int_time": 10.0,           # seconds
+    "declination": -30.0,       # degrees
+    "subarray_type": "AA4",
+    "verbose": True,
+    "njobs": 1,
+    "checkpoint": 16,
+}
+
+noise_slice = create_noise_slice(uvmap_filename, sim_params, noise_params)
