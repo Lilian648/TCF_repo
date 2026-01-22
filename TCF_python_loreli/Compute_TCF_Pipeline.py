@@ -201,164 +201,46 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
     return nmodes, sr_vals
 
 
-################################################################################################################################################
-#################################### Main: Run All #############################################################################################
-# currently incomplete - need to add addition of noise/smoothing section 
-################################################################################################################################################
-
-def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=False):
-
+def compute_tcf_for_file_list(slice_files_list, L, rvals, overwrite=False):
     """
-    CHANGES TO BE MADE:
-        - want to define the output directory within the function so that it has the correct info in the folder names
+    Compute TCF for each 2D slice and save *_TCFresult.txt
+    in the SAME directory as the slice file.
 
-
-    
-    GOAL: Run the LoReLi -> slices -> TCF pipeline for one simulation.
-
-    Parameters
-    ----------
-    sim_name : str
-        LoReLi simulation identifier (e.g. "10038").
-    rvals : array_like
-        1D array of r values (Mpc) at which to compute the TCF.
-    out_dir : str
-        Directory where slice txt files and TCF result txt files will be saved.
-    delta_mpc : float
-        Physical spacing (Mpc) between extracted slices.
-    z_target : float
-        Target redshift; the cube closest to this redshift is used.
-    overwrite_tcf : bool
-        If True, recompute TCF results even if the output file already exists.
-
-    Outputs
+    Returns
     -------
-    - Slice files:       out_dir/slice_axis{axis}_idx{...}_r{...}Mpc.txt
-    - TCF result files:  same name with suffix _TCFresult.txt
-    - Summary plot:      out_dir/TCF_mean_z{z_target}.png
+    tcf_files : list[Path]
+        Paths to the saved TCF result files.
     """
+    t_overall_start = time.time()
     
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rvals = np.asarray(rvals, dtype=float)
+    tcf_files = []
 
-    print("CHECKING GRAPHS")
+    for idx, slice_file in enumerate(slice_files_list):
+        slice_path = Path(slice_file)
 
+        print(f"➤ {idx+1}/{len(slice_files_list)}  {slice_path.name}")
+        tstart = time.time()
 
-    # ----------------------------
-    # 1. Load sim
-    # ----------------------------
-    # base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
+        # same directory, same stem
+        out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
 
-    # sim = Cat(sim_name,redshift_range='all', skip_early=False, path_spectra='spectra', path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes', 
-    #           base_dir=base_dir, load_params=False, load_spectra=False, just_Pee=True, reinitialise_spectra=False, save_spectra=False, 
-    #           load_density_cubes=False, load_xion_cubes=False, load_T21cm_cubes=True, verbose=True, debug=False)
+        if out_path.exists() and not overwrite:
+            print(f"  ↪ Skipping existing TCF")
+            tcf_files.append(out_path)
+            continue
 
-    # # sim params
-    # L = sim.box_size # Mpc (check units?)
-    
-    # ----------------------------
-    # 2. Choose redshift cube 
-    # (eg, choosing cube closest to z=6)
-    # ---------------------------- 
-    # z_idx = np.abs(sim.z - z_target).argmin()
-    # z_used = float(sim.z[z_idx])
-    # cube = sim.T21cm[z_idx]  # expected shape (N,N,N)
+        field2d = np.loadtxt(slice_path)
+        nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
 
-    #################################################################################
-    ######################## TESTING VERSION (smaller cube) #########################
-    #################################################################################
-    cube = np.load(sim_name)uvmap_filename # a 3d cube array (NOT the loreli sim object)
-    L = 296/4
+        tcf_files.append(out_path)
 
-    # ----------------------------
-    # 3. Extract slices for all axes
-    # (all three axes - will all save to save folder with indication of axis in filename)
-    # ---------------------------- 
-    # saved_files = []
-    # axes = ["x", "y", "z"]
-    # for ax in axes:
-    #     saved_files += extract_LoReLi_slices_every_dMpc(cube_3d=cube, output_dir=out_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
-    #                                                     axis=ax, demean=True)
+        tend = time.time()
+        print(f"  ✓ time: {tend - tstart:.1f}s")
 
+    t_overall_end = time.time()
+    print(f"TCFs of entire list computed in time: {t_overall_end - t_overall_start:.1f}s")
 
-    # # ----------------------------
-    # # 4. Compute TCF for each slice file
-    # # ----------------------------
-    # tcf_files = []
-    # tstart = time.time()
-    # for index, slice_file in enumerate(saved_files):
-        
-    #     print(f"Realisation {index+1}/{len(saved_files)}")
-    #     slice_path = Path(slice_file)
-
-    #     # Output naming: same file name + _TCFresult before extension
-    #     out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
-
-    #     if out_path.exists() and not overwrite_tcf:
-    #         print(f"  ↪ Skipping existing TCF: {out_path}")
-    #         tcf_files.append(str(out_path))
-    #         continue
-
-    #     field2d = np.loadtxt(slice_path)
-
-    #     nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
-    #     tcf_files.append(str(out_path))
-        
-    # tend = time.time()
-    # print(f"total time taken for all realisations = {tstart-tend:.1f}s") 
-
-    # ----------------------------
-    # 5) Load all TCF result files and make mean + 1σ band plot
-    # ----------------------------
-    # If you prefer, you can use `tcf_files` directly; glob is handy if you rerun later.
-    tcf_files = sorted(out_dir.glob("*_TCFresult.txt"))
-
-    if len(tcf_files) == 0:
-        raise RuntimeError(f"No *_TCFresult.txt files found in {out_dir}")
-
-    sr_stack = []
-    for f in tcf_files:
-        data = np.loadtxt(f)
-        # file columns: nmodes, s(r), r  (as you save them)
-        s = data[:, 1]
-        r = data[:, 2]
-        sr_stack.append(s)
-
-    sr_stack = np.vstack(sr_stack)              # shape (Nslices, Nr)
-    sr_mean = sr_stack.mean(axis=0)
-    sr_std = sr_stack.std(axis=0, ddof=1) if sr_stack.shape[0] > 1 else np.zeros_like(sr_mean)
-
-    # plot
-    plt.figure()
-    plt.plot(rvals, sr_mean, label=f"mean over {sr_stack.shape[0]} slices")
-    plt.fill_between(rvals, sr_mean - sr_std, sr_mean + sr_std, alpha=0.3, label="±1σ")
-    plt.xlabel("r [Mpc]")
-    plt.ylabel("s(r)")
-    #plt.title(f"LoReLi {sim_name}: TCF mean (z≈{sim.z[z_used]:.2f})") NON-TEST VERSION
-    plt.title(f"LoReLi mock: TCF mean (z≈6)")  ## XXXXX
-    plt.legend()
-    plt.tight_layout()
-
-    z_used = 6  ## XXXXX
-    plot_path = out_dir / f"TCF_plt_z{str(z_used).replace('.','p')}.png"
-    plt.savefig(plot_path, dpi=200)
-    plt.close()
-
-    print(f"\n Done. Saved mean plot: {plot_path}")
-    z_idx = 37 ## XXXXX
-    return {
-        "z_idx": z_idx,
-        #"z_used": float(sim.z[z_idx]),
-        #"slice_files": saved_files,
-        "tcf_files": [str(p) for p in tcf_files],
-    }
-
-# sim_name = "mock_LoReLi_sim_N64.npy"
-# rvals = np.linspace(2, 50, 49)
-# results = TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=True)
-
-
+    return tcf_files
 
 
 
@@ -368,7 +250,8 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
 
 
 
-def add_noise_smoothing(clean_xy, redshift, uvmap_filename, sim_params, noise_params, depth_mhz):
+
+def add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, depth_mhz):
     """
     Create a single 2D thermal-noise slice at one redshift using tools21cm.noise_map.
 
@@ -473,46 +356,268 @@ def add_noise_smoothing(clean_xy, redshift, uvmap_filename, sim_params, noise_pa
 
     return noise_xy, noisy_xy, obs_xy
 
+
 # testing
 
 
-obs_time = 1000.                      # total observation hours
-total_int_time = 6.                   # hours per day
-int_time = 10.                        # seconds
-declination = -30.0                   # declination of the field in degrees
-subarray_type = "AA4"
-bmax_km = 2. #* units.km # km needed for smoothibg
+# obs_time = 1000.                      # total observation hours
+# total_int_time = 6.                   # hours per day
+# int_time = 10.                        # seconds
+# declination = -30.0                   # declination of the field in degrees
+# subarray_type = "AA4"
+# bmax_km = 2. #* units.km # km needed for smoothibg
 
-verbose = True
-uvmap_filename = "tests/uvmap_mock.h5"
-njobs = 1
-checkpoint = 16
+# verbose = True
+# uvmap_filename = "tests/uvmap_mock.h5"
+# njobs = 1
+# checkpoint = 16
 
-sim_params = {
-    "redshift": 6.0,
-    "box_length_Mpc": 296.0/4.0,  # 1/4 of the full sim size
-    "box_dim": 64,
-}
-print(type(sim_params["redshift"]))
+# sim_params = {
+#     "redshift": 6.0,
+#     "box_length_Mpc": 296.0/4.0,  # 1/4 of the full sim size
+#     "box_dim": 64,
+# }
+# print(type(sim_params["redshift"]))
 
-depth_mhz = 0.07 # no idea if this is correct or not
+# depth_mhz = 0.07 # no idea if this is correct or not
+
+# noise_params = {
+#     "obs_time": 1000.0,         # total observation hours
+#     "total_int_time": 6.0,      # hours per day
+#     "int_time": 10.0,           # seconds
+#     "declination": -30.0,       # degrees
+#     "subarray_type": "AA4",
+#     "verbose": True,
+#     "njobs": 1,
+#     "checkpoint": 16,
+#     "bmax_km": bmax_km
+# }
+
+# clean_xy = np.load("tests/mock_LoReLi_sim_N64.npy")[:, :, 0]
+# noise_xy, noisy_xy, obs_xy = add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, depth_mhz)
+
+# np.savetxt("tests/mock_noise_slice.txt", noise_xy)
+# np.savetxt("tests/mock_noisy_slice.txt", noisy_xy)
+# np.savetxt("tests/mock_obs_slice.txt", obs_xy)
+
+
+################################################################################################################################################
+#################################### Main: Run All #############################################################################################
+# currently incomplete - need to add addition of noise/smoothing section 
+################################################################################################################################################
+
+def TCFpipeline_single_sim(sim_name, rvals, z_target, noise_params, uvmap_filename, delta_mpc=10.0, overwrite_tcf=False):
+
+    """
+    CHANGES TO BE MADE:
+        - want to define the output directory within the function so that it has the correct info in the folder names
+
+
+    
+    GOAL: Run the LoReLi -> slices -> TCF pipeline for one simulation.
+
+    Parameters
+    ----------
+    sim_name : str
+        LoReLi simulation identifier (e.g. "10038").
+    rvals : array_like
+        1D array of r values (Mpc) at which to compute the TCF.
+    out_dir : str
+        Directory where slice txt files and TCF result txt files will be saved.
+    delta_mpc : float
+        Physical spacing (Mpc) between extracted slices.
+    z_target : float
+        Target redshift; the cube closest to this redshift is used.
+    overwrite_tcf : bool
+        If True, recompute TCF results even if the output file already exists.
+
+    Outputs
+    -------
+    - Slice files:       out_dir/slice_axis{axis}_idx{...}_r{...}Mpc.txt
+    - TCF result files:  same name with suffix _TCFresult.txt
+    - Summary plot:      out_dir/TCF_mean_z{z_target}.png
+    """
+
+    it_begins = time.time()
+    print(f" %%%%%% IT BEGINS AT TIME: {it_begins}")
+    
+    # ----------------------------
+    # 1. Load sim
+    # ----------------------------
+    # base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
+
+    # sim = Cat(sim_name,redshift_range='all', skip_early=False, path_spectra='spectra', path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes', 
+    #           base_dir=base_dir, load_params=False, load_spectra=False, just_Pee=True, reinitialise_spectra=False, save_spectra=False, 
+    #           load_density_cubes=False, load_xion_cubes=False, load_T21cm_cubes=True, verbose=True, debug=False)
+
+    # # sim params
+    # L = sim.box_size # Mpc (check units?)
+    
+    # ----------------------------
+    # 2. Choose redshift cube 
+    # (eg, choosing cube closest to z=6)
+    # ---------------------------- 
+    # z_idx = np.abs(sim.z - z_target).argmin()
+    # z_used = float(sim.z[z_idx])
+    # cube = sim.T21cm[z_idx]  # expected shape (N,N,N)
+
+    z_idx = 38
+    
+    # define base directory
+    base_dir = Path(f"tests/sn{sim_name}/zidx{z_idx}")
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    # create sibling folders for results
+    clean_dir = base_dir / "clean_slices"
+    noise_dir = base_dir / "noise_slices"
+    obs_dir   = base_dir / "obs_slices"
+    
+    clean_dir.mkdir(exist_ok=True)
+    noise_dir.mkdir(exist_ok=True)
+    obs_dir.mkdir(exist_ok=True)
+
+
+    
+    rvals = np.asarray(rvals, dtype=float)
+
+    #################################################################################
+    ######################## TESTING VERSION (smaller cube) #########################
+    #################################################################################
+    print(sim_name)
+    # for testing i am just putting a specific filename in here!!!!
+    cube = np.load("tests/mock_LoReLi_sim_N64.npy") # a 3d cube array 
+    L = 296/4
+    z_idx = 38
+    z_used = 6
+    N = cube.shape[0] # box dimensions (NxNxN)
+
+    # ----------------------------
+    # 3. Extract 2D slices from all axes
+    # (all three axes - will all save to save folder with indication of axis in filename)
+    # ---------------------------- 
+    clean_files = []
+    axes = ["x", "y", "z"]
+    for ax in axes:
+        print(f"Extracting 2D slices along axis {ax}")
+        clean_files += extract_LoReLi_slices_every_dMpc(cube_3d=cube, output_dir=clean_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
+                                                        axis=ax, demean=True)
+
+
+    # ----------------------------
+    # 4. Add noise + smoothing
+    # ----------------------------
+    
+    # Choose a bandwidth assumption for one 2D “channel map”.
+    # For now keep it fixed + documented (you can upgrade this later).
+    depth_mhz = float(noise_params.get("depth_mhz", 0.2))  # MHz, e.g. 0.2
+    
+    sim_params = {
+        "redshift": float(z_used),
+        "box_length_Mpc": float(L),
+        "box_dim": int(N),
+    }
+    
+    noise_files = []
+    obs_files = []
+    
+    for index, slice_path in enumerate(clean_files):
+
+        print(f"Adding noise + smoothing to {index+1}/{len(clean_files)}")
+        
+        slice_path = Path(slice_path)
+        filename_root = slice_path.stem
+    
+        clean_xy = np.loadtxt(slice_path)
+        noise_xy, noisy_xy, obs_xy = add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, depth_mhz)
+    
+        noise_out = noise_dir / f"{filename_root}_NOISE.txt"
+        obs_out   = obs_dir   / f"{filename_root}_OBS.txt"
+    
+        np.savetxt(noise_out, noise_xy)
+        np.savetxt(obs_out,   obs_xy)
+    
+        noise_files.append(noise_out)
+        obs_files.append(obs_out)
+    
+    
+
+    # ----------------------------
+    # 5. Compute TCF for each slice file
+    # ----------------------------
+
+    # clean slices
+    tcf_clean_files = compute_tcf_for_file_list(clean_files, L, rvals, overwrite=overwrite_tcf)
+
+    # noise only slices
+    tcf_noise_files = compute_tcf_for_file_list(noise_files, L, rvals, overwrite=overwrite_tcf)
+
+    # observed slices
+    tcf_obs_files = compute_tcf_for_file_list(obs_files, L, rvals, overwrite=overwrite_tcf)
+
+    it_ends = time.time()
+    print(f" %%%%%% IT ENDS AT TIME: {it_ends}, taking {it_ends - it_begins}s total")
+    
+    return {
+        "z_idx": z_idx,
+        "z_used": float(sim.z[z_idx]),
+        "clean_files": saved_files,
+        "tcf_files": [str(p) for p in tcf_files],
+    }
+        
+
+
+################## TESTING ##################
+
+# ----------------------------
+# Define test parameters
+# ----------------------------
+sim_name = "10038"
+
+# small r range for speed
+rvals = np.linspace(2, 50, 49)
 
 noise_params = {
-    "obs_time": 1000.0,         # total observation hours
-    "total_int_time": 6.0,      # hours per day
-    "int_time": 10.0,           # seconds
-    "declination": -30.0,       # degrees
+    "obs_time": 1000.0,        # hours
+    "total_int_time": 6.0,     # hours
+    "int_time": 10.0,          # seconds
+    "declination": -30.0,
     "subarray_type": "AA4",
+    "bmax_km": 2.0,
+    "depth_mhz": 1,            # MHz
     "verbose": True,
     "njobs": 1,
-    "checkpoint": 16,
-    "bmax_km": bmax_km
 }
 
-clean_xy = np.load("tests/mock_LoReLi_sim_N64.npy")[:, :, 0]
-redshift = 6
-noise_xy, noisy_xy, obs_xy = add_noise_smoothing(clean_xy, redshift, uvmap_filename, sim_params, noise_params, depth_mhz)
+uvmap_filename = "tests/uvmap_mock.h5"
 
-np.savetxt("tests/mock_noise_slice.txt", noise_xy)
-np.savetxt("tests/mock_noisy_slice.txt", noisy_xy)
-np.savetxt("tests/mock_obs_slice.txt", obs_xy)
+# ----------------------------
+# Run pipeline
+# ----------------------------
+print("Running TCF pipeline test...")
+
+
+
+result = TCFpipeline_single_sim(
+    sim_name=sim_name,
+    rvals=rvals,
+    z_target=6.0,
+    noise_params=noise_params,
+    uvmap_filename=uvmap_filename,
+    delta_mpc=10.0,          
+    overwrite_tcf=True
+)
+
+print("\nPipeline returned:")
+for k, v in result.items():
+    print(f"{k}: {v}")
+
+
+
+
+
+################################################################################################################################################
+####################################  ###################################################################
+################################################################################################################################################
+
+
+
