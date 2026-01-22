@@ -203,7 +203,7 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
 
 ################################################################################################################################################
 #################################### Main: Run All #############################################################################################
-# currently incomplete - will put into main() function soon
+# currently incomplete - need to add addition of noise/smoothing section 
 ################################################################################################################################################
 
 def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_txtfiles/zidx_37/", delta_mpc=10.0, overwrite_tcf=False):
@@ -268,7 +268,7 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
     #################################################################################
     ######################## TESTING VERSION (smaller cube) #########################
     #################################################################################
-    cube = np.load(sim_name) # a 3d cube array (NOT the loreli sim object)
+    cube = np.load(sim_name)uvmap_filename # a 3d cube array (NOT the loreli sim object)
     L = 296/4
 
     # ----------------------------
@@ -368,86 +368,134 @@ def TCFpipeline_single_sim(sim_name, rvals, z_target=6, out_dir="tests/sn10038_t
 
 
 
-def make_observed_2Dslice(
-    clean_xy,
-    redshift,
-    box_length_Mpc,
-    noise_params,
-    uvmap_filename,
-    bmax_km,
-):
+def add_noise_smoothing(clean_xy, redshift, uvmap_filename, sim_params, noise_params, depth_mhz):
     """
-    Create an 'observed' 2D slice: clean + noise, then instrument smoothing.
+    Create a single 2D thermal-noise slice at one redshift using tools21cm.noise_map.
+
+    Parameters
+    ----------
+    uvmap_filename : str or Path
+        Cache file for UV maps.
+    sim_params : dict
+        Must contain: 
+        - redshift (float), 
+        - box_length_Mpc (float), 
+        - box_dim (int)
+    noise_params : dict
+        Must contain: 
+        - obs_time, 
+        - total_int_time, 
+        - int_time,
+        - declination,
+        - subarray_type,
+        - bmax_km
+        Optional: "
+        - uv_weighting,
+        - verbose,
+        - njobs,
+        - checkpoint
+    depth_mhz : float
+        Frequency channel width (MHz) used to set the thermal noise amplitude.
 
     Returns
     -------
-    noisy_xy : (N,N) clean+noise
-    obs_xy   : (N,N) smoothed version
+    noise_xy : ndarray, shape (N,N)
+        2D noise realisation in mK (same convention as noise_lightcone output slices).
     """
-    N = clean_xy.shape[0]
+    # unpack parameters
+    z = float(sim_params["redshift"])
+    N = int(sim_params["box_dim"])
+    boxsize = float(sim_params["box_length_Mpc"])
 
-    sim_params = {"redshift": float(redshift), "box_length_Mpc": float(box_length_Mpc), "box_dim": int(N)}
+    obs_time = float(noise_params["obs_time"])
+    total_int_time = float(noise_params["total_int_time"])
+    int_time = float(noise_params["int_time"])
+    declination = float(noise_params["declination"])
+    subarray_type = noise_params["subarray_type"]
+    bmax_km = float(noise_params["bmax_km"])
 
-    # --- make 3-channel noise so smooth_lightcone is happy ---
-    dz = 1e-3
-    zs = np.array([redshift - dz, redshift, redshift + dz], dtype=float)
+    uv_weighting = noise_params.get("uv_weighting", "natural")
+    verbose = bool(noise_params.get("verbose", False))
+    njobs = int(noise_params.get("njobs", 1))
+    checkpoint = noise_params.get("checkpoint", 16)
 
-    # generate 3-channel noise (x,y,zchan)
-    noiseonly_xyz = t2c.noise_lightcone(
-        ncells=N,
-        zs=zs,
-        obs_time=noise_params["obs_time"],
-        total_int_time=noise_params["total_int_time"],
-        int_time=noise_params["int_time"],
-        declination=noise_params["declination"],
-        subarray_type=noise_params["subarray_type"],
-        boxsize=box_length_Mpc,
-        verbose=bool(noise_params.get("verbose", False)),
-        save_uvmap=str(uvmap_filename),
-        n_jobs=int(noise_params.get("njobs", 1)),
-        checkpoint=noise_params.get("checkpoint", False),
-    ).astype(np.float32)
+    uvpath = Path(uvmap_filename)
+    uvpath.parent.mkdir(parents=True, exist_ok=True)
+    print(f"{'Reusing' if uvpath.exists() else 'Will save'} UV map at: {uvpath}")
 
-    noiseonly_xy = noiseonly_xyz[:, :, 1]
-
-    # embed clean slice into 3 channels (repeat same map)
-    clean_xyz = np.repeat(clean_xy[:, :, None], 3, axis=2).astype(np.float32)
-
-    noisy_xyz = clean_xyz + noiseonly_xyz
-    noisy_xy = noisy_xyz[:, :, 1]  # take the central channel as your target-z result
-
-    obs_xyz, zs_used = t2c.smooth_lightcone(
-        lightcone=noisy_xyz,
-        z_array=zs,
-        box_size_mpc=box_length_Mpc,
-        max_baseline=bmax_km,
+    # 1. Build/load the uv map for this redshift
+    uvs = t2c.get_uv_map_lightcone(
+        N, 
+        np.array([z], dtype=float),
+        subarray_type=subarray_type,
+        total_int_time=total_int_time,
+        int_time=int_time,
+        boxsize=boxsize,
+        declination=declination,
+        save_uvmap=str(uvpath),
+        n_jobs=njobs,
+        verbose=verbose,
+        checkpoint=checkpoint,
     )
-    obs_xyz = obs_xyz.astype(np.float32)
+    N_ant = uvs.get("Nant") or uvs.get("N_ant")  # version differences
+    uv_map = uvs[f"{z:.3f}"]
 
-    obs_xy = obs_xyz[:, :, 1]  # again take central channel
+    # 2. Generate 2D noise (Jy)
+    noise2d_jy = t2c.noise_map(
+        N, z, depth_mhz,
+        obs_time=obs_time,
+        subarray_type=subarray_type,
+        boxsize=boxsize,
+        total_int_time=total_int_time,
+        int_time=int_time,
+        declination=declination,
+        uv_map=uv_map,
+        N_ant=N_ant,
+        uv_weighting=uv_weighting,
+        verbose=False,
+    )
 
-    return noiseonly_xy, noisy_xy, obs_xy
+    # Convert to Kelvin/mK like noise_lightcone does
+    noise_xy = t2c.jansky_2_kelvin(noise2d_jy, z, boxsize=boxsize)
 
+    # 3. Add nosie to clean sim
+    noisy_xy = clean_xy + noise_xy
+
+    # 4. Smoothing
+    dtheta = (1.0 + z) * 21e-5 / bmax_km  # radians-ish small-angle factor used by tools21cm
+    ang_res_mpc = dtheta * t2c.cm.z_to_cdist(z)   # comoving Mpc
+
+    # convert to sigma in pixels
+    fwhm = ang_res_mpc * N / boxsize
+
+    # apply Gaussian smoothing
+    obs_xy = t2c.smooth_gauss(noisy_xy, fwhm=fwhm)
+
+    return noise_xy, noisy_xy, obs_xy
 
 # testing
 
-
-clean_xy = np.load("tests/mock_LoReLi_sim_N64.npy")[:, :, 0]
 
 obs_time = 1000.                      # total observation hours
 total_int_time = 6.                   # hours per day
 int_time = 10.                        # seconds
 declination = -30.0                   # declination of the field in degrees
 subarray_type = "AA4"
-njobs = 1
-checpoints = 16
 bmax_km = 2. #* units.km # km needed for smoothibg
 
+verbose = True
 uvmap_filename = "tests/uvmap_mock.h5"
+njobs = 1
+checkpoint = 16
 
-redshift = 6.0
-box_length_Mpc = 296.0/4.0  # 1/4 of the full sim size
-box_dim = 64
+sim_params = {
+    "redshift": 6.0,
+    "box_length_Mpc": 296.0/4.0,  # 1/4 of the full sim size
+    "box_dim": 64,
+}
+print(type(sim_params["redshift"]))
+
+depth_mhz = 0.07 # no idea if this is correct or not
 
 noise_params = {
     "obs_time": 1000.0,         # total observation hours
@@ -458,12 +506,13 @@ noise_params = {
     "verbose": True,
     "njobs": 1,
     "checkpoint": 16,
+    "bmax_km": bmax_km
 }
 
-noiseonly_xy, noisy_xy, obs_xy = make_observed_2Dslice(
-    clean_xy,
-    redshift,
-    box_length_Mpc,
-    noise_params,
-    uvmap_filename,
-    bmax_km)
+clean_xy = np.load("tests/mock_LoReLi_sim_N64.npy")[:, :, 0]
+redshift = 6
+noise_xy, noisy_xy, obs_xy = add_noise_smoothing(clean_xy, redshift, uvmap_filename, sim_params, noise_params, depth_mhz)
+
+np.savetxt("tests/mock_noise_slice.txt", noise_xy)
+np.savetxt("tests/mock_noisy_slice.txt", noisy_xy)
+np.savetxt("tests/mock_obs_slice.txt", obs_xy)
