@@ -229,46 +229,54 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
     return nmodes, sr_vals, rvals
 
 
-def compute_tcf_for_file_list(slice_files_list, L, rvals, overwrite=False):
+def compute_tcf_for_slices(slices, L, rvals, verbose=True):
     """
-    Compute TCF for each 2D slice and save *_TCFresult.txt
-    in the SAME directory as the slice file.
+    Compute TCF for each 2D slice.
+
+    Parameters
+    ----------
+    slices : array-like
+        Either a list of (Ny, Nx) arrays or a stacked array (nslices, Ny, Nx).
+    L : float
+        Physical size (Mpc) of the 2D slice.
+    rvals : array-like
+        Radii at which to compute the TCF.
+    verbose : bool
+        Print progress/timing.
 
     Returns
     -------
-    tcf_files : list[Path]
-        Paths to the saved TCF result files.
+    sr_results : np.ndarray
+        Shape (nslices, len(rvals))  (or whatever shape sr has).
+    nmodes_results : np.ndarray
+        Shape (nslices, len(rvals))  (or whatever shape nmodes has).
     """
-    t_overall_start = time.time()
-    
-    tcf_files = []
+    t0 = time.time()
 
-    for idx, slice_file in enumerate(slice_files_list):
-        slice_path = Path(slice_file)
+    slices = np.asarray(slices)
+    nslices = len(slices)
 
-        print(f"➤ {idx+1}/{len(slice_files_list)}  {slice_path.name}")
+    sr_results = []
+    nmodes_results = []
+
+    for i, sl in enumerate(slices):
+        if verbose:
+            print(f"➤ {i+1}/{nslices}")
         tstart = time.time()
 
-        # same directory, same stem
-        out_path = slice_path.with_name(slice_path.stem + "_TCFresult.txt")
+        nmodes, sr, _ = pyTCF_of_2Dslice(sl, L, rvals, out_path=None)
 
-        if out_path.exists() and not overwrite:
-            print(f"  ↪ Skipping existing TCF")
-            tcf_files.append(out_path)
-            continue
+        sr_results.append(sr)
+        nmodes_results.append(nmodes)
 
-        field2d = np.loadtxt(slice_path)
-        nmodes, sr = pyTCF_of_2Dslice(field2d, L, rvals, str(out_path))
+        if verbose:
+            print(f"  ✓ time: {time.time() - tstart:.1f}s")
 
-        tcf_files.append(out_path)
+    if verbose:
+        print(f"TCFs computed in {time.time() - t0:.1f}s")
 
-        tend = time.time()
-        print(f"  ✓ time: {tend - tstart:.1f}s")
+    return np.array(sr_results), np.array(nmodes_results)
 
-    t_overall_end = time.time()
-    print(f"TCFs of entire list computed in time: {t_overall_end - t_overall_start:.1f}s")
-
-    return tcf_files
 
 
 
