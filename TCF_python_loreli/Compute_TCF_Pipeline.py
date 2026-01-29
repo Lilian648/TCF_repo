@@ -39,6 +39,8 @@ import time
 import h5py
 
 import tools21cm as t2c
+import tools21cm.cosmo as cm
+
 
 
 ################################################################################################################################################
@@ -47,37 +49,50 @@ import tools21cm as t2c
 
 def extract_LoReLi_slices_every_dMpc(
     cube_3d,
-    output_dir,
-    box_size_mpc=296.0,
-    delta_mpc=10.0,
+    box_size_mpc,
+    delta_mpc=40.0,
     axis="z",
-    demean=True
+    demean=True,
+    save=False,
+    output_dir=None,
+    return_stack=True,
+    verbose=True,
 ):
     """
-    Extract 2D slices from a 3D LoReLi cube at regular physical intervals
-    (e.g. every 10 Mpc) and save them as .txt files.
+    Extract 2D slices from a 3D cube at regular physical intervals.
 
     Parameters
     ----------
     cube_3d : np.ndarray
-        3D array of shape (Nx, Ny, Nz), e.g. cube_z6 = sim.T21cm[37].
-    output_dir : str or Path
-        Directory where the .txt slices will be saved.
+        3D array (Nx, Ny, Nz) (or equivalent ordering; slicing uses `axis`).
     box_size_mpc : float
         Physical size of the simulation box in Mpc (assumed cubic).
     delta_mpc : float
         Desired spacing between slices in Mpc (e.g. 10 Mpc).
-    axis : {"x", "y", "z", 0, 1, 2}
-        Axis along which to take slices. Can be int or "x"/"y"/"z".
+    axis : {"x","y","z",0,1,2}
+        Axis along which to take slices.
     demean : bool
-        If True, subtract mean from each 2D slice before saving.
+        If True, subtract the mean of each 2D slice (slice-by-slice demeaning).
+    save : bool
+        If True, save each slice as a text file.
+    output_dir : str or Path or None
+        Directory where slices will be saved if `save=True`. Ignored if `save=False`.
+    fmt : str
+        Format string for np.savetxt if saving.
+    verbose : bool
+        If True, print diagnostic messages.
 
     Returns
     -------
+    slices : np.ndarray or list
+        Extracted 2D slices.
+    slice_indices : np.ndarray
+        Indices along the slicing axis used for each slice.
+    r_mpc : np.ndarray
+        Physical positions (Mpc) of each slice from the origin.
     saved_files : list of str
-        List of full file paths to the saved .txt slices.
+        Only returned if save=True. Filepaths of saved slices.
     """
-
     cube_3d = np.asarray(cube_3d)
     if cube_3d.ndim != 3:
         raise ValueError(f"cube_3d must be 3D, got shape {cube_3d.shape}")
@@ -85,59 +100,72 @@ def extract_LoReLi_slices_every_dMpc(
     # Map axis if given as string
     if isinstance(axis, str):
         axis_map = {"x": 0, "y": 1, "z": 2}
-        axis = axis.lower()
-        if axis not in axis_map:
-            raise ValueError(f"axis must be 'x', 'y', 'z', 0, 1, or 2, got {axis}")
-        axis = axis_map[axis]
+        a = axis.lower()
+        if a not in axis_map:
+            raise ValueError(f"axis must be 'x','y','z',0,1,2; got {axis!r}")
+        axis = axis_map[a]
+    if axis not in (0, 1, 2):
+        raise ValueError(f"axis must be 0,1,2; got {axis}")
+    
 
     N = cube_3d.shape[axis]
     cell_size_mpc = box_size_mpc / N
+    step_cells = max(int(round(delta_mpc / cell_size_mpc)), 1)
 
-    # Closest integer step in cells to target delta_mpc
-    step_cells = int(round(delta_mpc / cell_size_mpc))
-    step_cells = max(step_cells, 1)  # just in case
+    slice_indices = np.arange(0, N, step_cells, dtype=int)
+    r_mpc = slice_indices * cell_size_mpc
 
-    print(f"Box size: {box_size_mpc} Mpc")
-    print(f"N cells along axis {axis}: {N}")
-    print(f"Cell size: {cell_size_mpc:.4f} Mpc")
-    print(f"Requested spacing: {delta_mpc} Mpc")
-    print(f"Using step of {step_cells} cells (~{step_cells*cell_size_mpc:.3f} Mpc)")
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if verbose:
+        print(f"Box size: {box_size_mpc} Mpc")
+        print(f"N cells along axis {axis}: {N}")
+        print(f"Cell size: {cell_size_mpc:.4f} Mpc")
+        print(f"Requested spacing: {delta_mpc} Mpc")
+        print(f"Using step of {step_cells} cells (~{step_cells*cell_size_mpc:.3f} Mpc)")
+        print(f"Extracting {len(slice_indices)} slices.")
 
     saved_files = []
 
-    # Indices along chosen axis
-    slice_indices = np.arange(0, N, step_cells, dtype=int)
+    if save:
+        if output_dir is None:
+            raise ValueError("output_dir must be provided when save=True")
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    for idx in slice_indices:
-        # Extract the 2D slice depending on axis
+    slices = []
+    for idx, r in zip(slice_indices, r_mpc):
         if axis == 0:
             slice_2d = cube_3d[idx, :, :]
         elif axis == 1:
             slice_2d = cube_3d[:, idx, :]
-        elif axis == 2:
-            slice_2d = cube_3d[:, :, idx]
         else:
-            raise ValueError(f"Invalid axis: {axis}")
+            slice_2d = cube_3d[:, :, idx]
 
+        slice_2d = slice_2d.astype(np.float64, copy=False)
         if demean:
-            mu = slice_2d.mean()
-            slice_2d = slice_2d - mu
+            slice_2d = slice_2d - slice_2d.mean()
 
-        # Physical position of this slice from the "origin"
-        r_mpc = idx * cell_size_mpc
+        slices.append(slice_2d)
 
-        r_mpc_int = int(round(r_mpc))
-        fname = output_dir / f"slice_axis{axis}_idx{idx}_r{r_mpc_int}Mpc.txt"
-        np.savetxt(fname, slice_2d, fmt="%.8e")
-        saved_files.append(str(fname))
+        if save:
+            r_int = int(round(r))
+            fname = output_dir / f"slice_axis{axis}_idx{idx}_r{r_int}Mpc.txt"
+            np.savetxt(fname, slice_2d, fmt="%.8e")
+            saved_files.append(str(fname))
+            if verbose:
+                print(f"  ✔ Extracted and saved idx={idx}, r≈{r:.2f} Mpc -> {fname}")
+        else:
+            if verbose:
+                print(f"  ✔ Extracted idx={idx}, r≈{r:.2f} Mpc")
 
-        print(f"  ✔ Saved slice at idx={idx}, r≈{r_mpc:.2f} Mpc -> {fname}")
+    slices = np.stack(slices, axis=0)  # (nslices, Ny, Nx)
 
-    print("\n All slices extracted.")
-    return saved_files
+    if verbose:
+        print("All slices extracted.")
+
+    if save:
+        return slices, slice_indices, r_mpc, saved_files
+    return slices, slice_indices, r_mpc
+
 
 
 def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
@@ -537,13 +565,13 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
     # ----------------------------
 
     # clean slices
-    tcf_clean_files = compute_tcf_for_files(clean_files, L, rvals, overwrite=overwrite_tcf)
+    tcf_clean_files = compute_tcf_for_file_list(clean_files, L, rvals, overwrite=overwrite_tcf)
 
     # noise only slices
-    tcf_noise_files = compute_tcf_for_files(noise_files, L, rvals, overwrite=overwrite_tcf)
+    tcf_noise_files = compute_tcf_for_file_list(noise_files, L, rvals, overwrite=overwrite_tcf)
 
     # observed slices
-    tcf_obs_files = compute_tcf_for_files(obs_files, L, rvals, overwrite=overwrite_tcf)
+    tcf_obs_files = compute_tcf_for_file_list(obs_files, L, rvals, overwrite=overwrite_tcf)
 
     it_ends = time.time()
     print(f"%%%%%% IT ENDS: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(it_ends))}")
@@ -604,8 +632,8 @@ uvmap_filename = "tests/uvmap_mock_fullsim.h5"
 # run function
 # ---------------------------- 
 
-TCFpipeline_single_sim(sim_name, sim_cube, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc=10.0, overwrite_tcf=False)
-
+TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc=10.0, overwrite_tcf=False)
+    
 
 
 
