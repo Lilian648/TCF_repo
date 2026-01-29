@@ -168,7 +168,7 @@ def extract_LoReLi_slices_every_dMpc(
 
 
 
-def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
+def pyTCF_of_2Dslice(field2d, L, rvals):
     """
     Compute the TCF of a single 2D field.
 
@@ -180,8 +180,6 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
         Physical size of the box (Mpc)
     rvals : array
         Scales at which to compute the TCF
-    outfile : str or None, optional
-        If provided, path to a text file where the results are saved.
 
     Returns
     -------
@@ -211,22 +209,11 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
 
     print("computing tcf ended")
 
-
-    print("saving")
-    # Optional saving to text file
-    if outfile is not None:
-        header = (
-            f"dim {ndim}\n"
-            f"nmodes   s(r)   r"
-        )
-
-        data = np.column_stack((nmodes, sr_vals, rvals))
-        np.savetxt(outfile, data, header=header, comments="# ")
-
     tend = time.time()
     print(f"time taken {tstart-tend:.1f}s")
 
-    return nmodes, sr_vals
+    return nmodes, sr_vals, rvals
+
 
 
 def compute_tcf_for_file_list(slice_files_list, L, rvals, overwrite=False):
