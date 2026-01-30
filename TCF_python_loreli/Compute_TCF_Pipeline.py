@@ -47,17 +47,7 @@ import tools21cm.cosmo as cm
 #################################### Functions #################################################################################################
 ################################################################################################################################################
 
-def extract_LoReLi_slices_every_dMpc(
-    cube_3d,
-    box_size_mpc,
-    delta_mpc=40.0,
-    axis="z",
-    demean=True,
-    save=False,
-    output_dir=None,
-    return_stack=True,
-    verbose=True,
-):
+def extract_LoReLi_slices_every_dMpc(cube_3d, box_size_mpc, delta_mpc=40.0, axis="z", demean=True, save=False, output_dir=None, verbose=True):
     """
     Extract 2D slices from a 3D cube at regular physical intervals.
 
@@ -88,7 +78,7 @@ def extract_LoReLi_slices_every_dMpc(
         Extracted 2D slices.
     slice_indices : np.ndarray
         Indices along the slicing axis used for each slice.
-    r_mpc : np.ndarray
+    slice_r_mpcs : np.ndarray
         Physical positions (Mpc) of each slice from the origin.
     saved_files : list of str
         Only returned if save=True. Filepaths of saved slices.
@@ -113,7 +103,7 @@ def extract_LoReLi_slices_every_dMpc(
     step_cells = max(int(round(delta_mpc / cell_size_mpc)), 1)
 
     slice_indices = np.arange(0, N, step_cells, dtype=int)
-    r_mpc = slice_indices * cell_size_mpc
+    slice_r_mpcs = slice_indices * cell_size_mpc
 
     if verbose:
         print(f"Box size: {box_size_mpc} Mpc")
@@ -132,7 +122,7 @@ def extract_LoReLi_slices_every_dMpc(
         output_dir.mkdir(parents=True, exist_ok=True)
 
     slices = []
-    for idx, r in zip(slice_indices, r_mpc):
+    for idx, r in zip(slice_indices, slice_r_mpcs):
         if axis == 0:
             slice_2d = cube_3d[idx, :, :]
         elif axis == 1:
@@ -163,8 +153,8 @@ def extract_LoReLi_slices_every_dMpc(
         print("All slices extracted.")
 
     if save:
-        return slices, slice_indices, r_mpc, saved_files
-    return slices, slice_indices, r_mpc
+        return slices, slice_indices, slice_r_mpcs, saved_files
+    return slices, slice_indices, slice_r_mpcs
 
 
 
@@ -190,6 +180,8 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
         each r-bin.
     sr_vals : array
         TCF evaluated at each rval
+    rvals : array
+        Scales at which to compute the TCF (same as inputted param, for clarity)
     """
     tstart = time.time()
     print("tstart:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tstart)))
@@ -229,7 +221,7 @@ def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
     return nmodes, sr_vals, rvals
 
 
-def compute_tcf_for_slices(slices, L, rvals, verbose=True):
+def compute_tcf_for_slices_list(slices, L, rvals, verbose=True):
     """
     Compute TCF for each 2D slice.
 
@@ -250,6 +242,9 @@ def compute_tcf_for_slices(slices, L, rvals, verbose=True):
         Shape (nslices, len(rvals))  (or whatever shape sr has).
     nmodes_results : np.ndarray
         Shape (nslices, len(rvals))  (or whatever shape nmodes has).
+    rvals : array-like
+        Radii at which to compute the TCF (same as inputted param,  for clarity).
+        shape len(rvals)
     """
     t0 = time.time()
 
@@ -275,7 +270,7 @@ def compute_tcf_for_slices(slices, L, rvals, verbose=True):
     if verbose:
         print(f"TCFs computed in {time.time() - t0:.1f}s")
 
-    return np.array(sr_results), np.array(nmodes_results)
+    return  np.array(nmodes_results), np.array(sr_results), rvals
 
 
 
@@ -289,10 +284,12 @@ def compute_tcf_for_slices(slices, L, rvals, verbose=True):
 
 def add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, depth_mhz):
     """
-    Create a single 2D thermal-noise slice at one redshift using tools21cm.noise_map.
+    Add SKA noise and smoothing to a single cim slice at one redshift using tools21cm
 
     Parameters
     ----------
+    clean_xy : array (shape (NxN))
+        clean sim slice
     uvmap_filename : str or Path
         Cache file for UV maps.
     sim_params : dict
@@ -320,6 +317,10 @@ def add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, dept
     -------
     noise_xy : ndarray, shape (N,N)
         2D noise realisation in mK (same convention as noise_lightcone output slices).
+    noisy_xy : ndarray, shape (N,N)
+        2D sim slice = clean + noise
+    obs_xy : ndarray, shape (N,N)
+        2D sim slice = clean + noise + smoothing
     """
     # unpack parameters
     z = float(sim_params["redshift"])
@@ -478,7 +479,6 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
         - "declination" : float, Declination of the observed field in degrees.
         - "subarray_type" : str, SKA-Low subarray configuration (e.g. "AA4").
         - "bmax_km" : float, Maximum baseline length in kilometres.
-        - "depth_mhz" : float, Frequency channel width in MHz.
         - "verbose" : bool, If True, print detailed information during noise generation.
         - "njobs" : int, Number of parallel jobs used for noise generation.
 
@@ -501,89 +501,148 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
     """
 
 
+
+
+def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params, uvmap_filename, delta_mpc):
+    """
+    Run the LoReLi → extract slices → adding noise → compute TCF pipeline for a single simulation at a single redshift.
+
+    Parameters
+    ----------
+    sim_name : str
+        Simulation identifier (e.g. "10038").
+    sim_cube : np.ndarray
+        3D simulation cube at a single redshift with shape (N, N, N).
+    z_idx : int
+        Index of the redshift slice used in the original simulation/lightcone.
+    z : float
+        Redshift corresponding to `sim_cube`.
+    L : float
+        Physical side length of the simulation box in Mpc.
+    rvals : array_like
+        1D array of triangle side lengths (in Mpc) at which to compute the TCF.
+    noise_params : dict
+        Dictionary containing parameters required for noise generation.
+        These are passed directly to the noise model.
+        Expected keys are:
+        - "obs_time" : float, Total observing time in hours (e.g. 1000.0).
+        - "total_int_time" : float, Total integration time per pointing in hours.
+        - "int_time" : float, Integration time per visibility sample in seconds.
+        - "declination" : float, Declination of the observed field in degrees.
+        - "subarray_type" : str, SKA-Low subarray configuration (e.g. "AA4").
+        - "bmax_km" : float, Maximum baseline length in kilometres.
+        - "verbose" : bool, If True, print detailed information during noise generation.
+        - "njobs" : int, Number of parallel jobs used for noise generation.
+    uvmap_filename : str
+        Path to the UV-coverage map used for generating interferometric noise.
+    delta_mpc : float
+        Physical spacing (in Mpc) between consecutive extracted slices
+        along each axis. Default is 10.0 Mpc.
+
+    Returns
+    -------
+    results : dict
+        Dictionary containing all pipeline outputs and metadata with keys:
+        - "sim_name" : str
+            Simulation identifier.
+        - "z" : float
+            Redshift of the processed cube.
+        - "z_idx" : int
+            Redshift index of the processed cube.
+        - "L" : float
+            Physical box size in Mpc.
+        - "N" : int
+            Number of pixels per dimension in the cube.
+        - "rvals" : np.ndarray
+            r values at which the TCF was evaluated.
+        - "slices_meta" : list of dict
+            Metadata for each extracted slice. Each entry contains:
+            {"axis", "slice_idx", "r_mpc"}.
+        - "clean_sr" : np.ndarray, shape: (N_slices, len(rvals))
+            TCF values for clean slices,
+            shape (nslices, len(rvals)).
+        - "clean_nmodes" : np.ndarray, shape: (N_slices, len(rvals))
+            Number of contributing triangle configurations for clean slices,
+            same shape as `clean_sr`.
+        - "noise_sr" : np.ndarray, shape: (N_slices, len(rvals))
+            TCF values for noise-only slices.
+        - "noise_nmodes" : np.ndarray, shape: (N_slices, len(rvals))
+            Number of modes for noise-only slices.
+        - "obs_sr" : np.ndarray, shape: (N_slices, len(rvals))
+            TCF values for observed (signal + noise) slices.
+        - "obs_nmodes" : np.ndarray, shape: (N_slices, len(rvals))
+            Number of modes for observed slices.
+
+    """
+
+    
     it_begins = time.time()
     print("%%%%%% IT BEGINS:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(it_begins)))
-    
-    # define base directory
-    z_tag = f"zsim_{z:.2f}".replace(".", "p")
-    base_dir = Path(f"tests/sn{sim_name}/{z_tag}")
-    base_dir.mkdir(parents=True, exist_ok=True)
 
-    # create sibling folders for results
-    clean_dir = base_dir / "clean_slices"
-    noise_dir = base_dir / "noise_slices"
-    obs_dir   = base_dir / "obs_slices"
-    
-    clean_dir.mkdir(exist_ok=True)
-    noise_dir.mkdir(exist_ok=True)
-    obs_dir.mkdir(exist_ok=True)
-
-    N = sim_cube.shape[0] # box dimensions (NxNxN) pix
+    N = sim_cube.shape[0]
 
     # ----------------------------
-    # 3. Extract 2D slices from all axes
-    # (all three axes - will all save to save folder with indication of axis in filename)
-    # ---------------------------- 
-    clean_files = []
-    axes = ["x", "y", "z"]
-    for ax in axes:
-        print(f"Extracting 2D slices along axis {ax}")
-        clean_files += extract_LoReLi_slices_every_dMpc(cube_3d=sim_cube, output_dir=clean_dir, box_size_mpc=L, delta_mpc=delta_mpc, 
-                                                        axis=ax, demean=True)
+    # 1) Extract slices along x,y,z
+    # ----------------------------
+    slices_meta = []   # list of dicts: axis, idx, r_mpc
+    clean_slices = []
+
+    for ax in ["x", "y", "z"]:
+        slices_ax, idx_ax, r_ax = extract_LoReLi_slices_every_dMpc(cube_3d=sim_cube, box_size_mpc=L, delta_mpc=delta_mpc, axis=ax, demean=True,
+                                                                   save=False, output_dir=None, verbose=True)
+
+        # append slices and metadata
+        for sl, ii, rr in zip(slices_ax, idx_ax, r_ax):
+            clean_slices.append(sl)
+            slices_meta.append({"axis": ax, "slice_idx": int(ii), "r_mpc": float(rr)})
+
+    clean_slices = np.asarray(clean_slices, dtype=np.float32)  # (nslices_total, N, N)
+
 
     # ----------------------------
-    # 4. Add noise + smoothing
+    # 2) Noise + smoothing per slice
     # ----------------------------
-    
-    # compute the depth in mhz
-    depth_mhz = (cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z)-L/2))-cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z)+L/2)))/N
-    
-    sim_params = {
-        "redshift": float(z),
-        "box_length_Mpc": float(L),
-        "box_dim": int(N),
-    }
-    
-    noise_files = []
-    obs_files = []
-    
-    for index, slice_path in enumerate(clean_files):
+    depth_mhz = (cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) - L/2)) - cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) + L/2))) / N
 
-        print(f"Adding noise + smoothing to {index+1}/{len(clean_files)}")
-        
-        slice_path = Path(slice_path)
-        filename_root = slice_path.stem
-    
-        clean_xy = np.loadtxt(slice_path)
-        noise_xy, noisy_xy, obs_xy = add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, depth_mhz)
-    
-        noise_out = noise_dir / f"{filename_root}_NOISE.txt"
-        obs_out   = obs_dir   / f"{filename_root}_OBS.txt"
-    
-        np.savetxt(noise_out, noise_xy)
-        np.savetxt(obs_out,   obs_xy)
-    
-        noise_files.append(noise_out)
-        obs_files.append(obs_out)
-    
-    
+    sim_params = {"redshift": float(z), "box_length_Mpc": float(L), "box_dim": int(N)}
+
+    noise_slices = np.empty_like(clean_slices, dtype=np.float32) # list of X 2D slices, X=number of clean slices
+    obs_slices   = np.empty_like(clean_slices, dtype=np.float32) # list of X 2D slices, X=number of clean slices
+
+    for i, sl in enumerate(clean_slices):
+        print(f"Adding noise + smoothing to {i+1}/{len(clean_slices)}")
+        noise_xy, noisy_xy, obs_xy = add_noise_smoothing(sl, uvmap_filename, sim_params, noise_params, depth_mhz)
+        noise_slices[i] = noise_xy
+        obs_slices[i]   = obs_xy
+
 
     # ----------------------------
-    # 5. Compute TCF for each slice file
+    # 3) Compute TCFs
     # ----------------------------
-
-    # clean slices
-    tcf_clean_files = compute_tcf_for_file_list(clean_files, L, rvals, overwrite=overwrite_tcf)
-
-    # noise only slices
-    tcf_noise_files = compute_tcf_for_file_list(noise_files, L, rvals, overwrite=overwrite_tcf)
-
-    # observed slices
-    tcf_obs_files = compute_tcf_for_file_list(obs_files, L, rvals, overwrite=overwrite_tcf)
+    clean_sr, clean_nmodes = compute_tcf_for_list_of_slices(clean_slices, L, rvals, verbose=True)
+    noise_sr, noise_nmodes = compute_tcf_for_list_of_slices(noise_slices, L, rvals, verbose=True)
+    obs_sr,   obs_nmodes   = compute_tcf_for_list_of_slices(obs_slices,   L, rvals, verbose=True)
 
     it_ends = time.time()
-    print(f"%%%%%% IT ENDS: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(it_ends))}")
+    print("%%%%%% IT ENDS:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(it_ends)))
     print(f"%%%%%% TOTAL: {it_ends - it_begins:.1f} s")
+
+    return {
+        "sim_name": sim_name,
+        "z": float(z),
+        "z_idx": int(z_idx),
+        "L": float(L),
+        "N": int(N),
+        "rvals": np.asarray(rvals),
+        "slices_meta": slices_meta,
+        "clean_sr": np.asarray(clean_sr),
+        "clean_nmodes": np.asarray(clean_nmodes),
+        "noise_sr": np.asarray(noise_sr),
+        "noise_nmodes": np.asarray(noise_nmodes),
+        "obs_sr": np.asarray(obs_sr),
+        "obs_nmodes": np.asarray(obs_nmodes),
+    }
+
 
 ################## TESTING ##################
 
@@ -629,7 +688,6 @@ noise_params = {
     "declination": -30.0,
     "subarray_type": "AA4",
     "bmax_km": 2.0,
-    "depth_mhz": 1,            # MHz
     "verbose": True,
     "njobs": 1,
 }
