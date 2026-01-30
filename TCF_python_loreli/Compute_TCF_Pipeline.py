@@ -570,7 +570,7 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
             Number of modes for noise-only slices.
         - "obs_sr" : np.ndarray, shape: (N_slices, len(rvals))
             TCF values for observed (signal + noise) slices.
-        - "obs_nmodes" : np.ndarray, shape: (N_slices, len(rvals))
+        - "obs_nmodes" : np.ndarray, shape: (N_slices, len(rvals))Compute_TCF_Pipeline
             Number of modes for observed slices.
 
     """
@@ -698,8 +698,7 @@ uvmap_filename = "tests/uvmap_mock_fullsim.h5"
 # run function
 # ---------------------------- 
 
-TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc=10.0, overwrite_tcf=False)
-    
+res_dict = TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc)
 
 
 
