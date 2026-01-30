@@ -37,6 +37,8 @@ import matplotlib.patheffects as pe
 import pickle as pkl
 import time
 import h5py
+import json
+import warnings
 
 import tools21cm as t2c
 import tools21cm.cosmo as cm
@@ -259,7 +261,7 @@ def compute_tcf_for_slices_list(slices, L, rvals, verbose=True):
             print(f"➤ {i+1}/{nslices}")
         tstart = time.time()
 
-        nmodes, sr, _ = pyTCF_of_2Dslice(sl, L, rvals, out_path=None)
+        nmodes, sr, _ = pyTCF_of_2Dslice(sl, L, rvals, outfile=None)
 
         sr_results.append(sr)
         nmodes_results.append(nmodes)
@@ -438,69 +440,169 @@ def add_noise_smoothing(clean_xy, uvmap_filename, sim_params, noise_params, dept
 # np.savetxt("tests/mock_obs_slice.txt", obs_xy)
 
 
+
+################################################################################################################################################
+#################################### Saving TCF Results as h5 File #############################################################################
+################################################################################################################################################
+
+
+def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filename, compression="gzip"):
+    """
+    Save TCF pipeline outputs into an HDF5 file (append mode).
+
+    Redshift handling
+    -----------------
+    Results are stored under a redshift group named like:
+        zsim_7p50
+    If that group already exists, the function creates a versioned group (with warning):
+        zsim_7p50_v2, zsim_7p50_v3, ...
+
+    Stored content (per redshift group)
+    -----------------------------------
+    - attrs: z, z_idx, delta_mpc, uvmap_filename, noise_params_json
+    - /slices: axis, slice_idx, r_mpc
+    - /tcf/clean: sr, nmodes
+    - /tcf/noise: sr, nmodes
+    - /tcf/obs:   sr, nmodes
+
+    Stored content (file-level)
+    ---------------------------
+    - attrs: sim_name, L_Mpc, N, created_utc
+    - /rvals: array of TCF radii (created once; checked for consistency on subsequent writes)
+
+    Returns
+    -------
+    saved_group : str
+        The HDF5 group name actually used (e.g. "zsim_7p50" or "zsim_7p50_v2").
+    """
+
+    def _get_versioned_group_name(h5file, base_name: str) -> str:
+        if base_name not in h5file:
+            return base_name
+        i = 2
+        while f"{base_name}_v{i}" in h5file:
+            i += 1
+        return f"{base_name}_v{i}"
+
+    h5_path = Path(h5_path)
+
+    # ---- required metadata ----
+    sim_name = str(results["sim_name"])
+    z = float(results["z"])
+    z_idx = int(results["z_idx"])
+    L = float(results["L"])
+    N = int(results["N"])
+    rvals = np.asarray(results["rvals"])
+
+    # ---- arrays to store ----
+    clean_sr     = np.asarray(results["clean_sr"])
+    clean_nmodes = np.asarray(results["clean_nmodes"])
+
+    noise_sr     = np.asarray(results["noise_sr"])
+    noise_nmodes = np.asarray(results["noise_nmodes"])
+
+    obs_sr       = np.asarray(results["obs_sr"])
+    obs_nmodes   = np.asarray(results["obs_nmodes"])
+
+    # ---- slice metadata ----
+    meta = results["slices_meta"]
+    axis_arr = np.array([m["axis"] for m in meta], dtype="S1")
+    slice_idx_arr = np.array([m["slice_idx"] for m in meta], dtype=np.int32)
+    r_mpc_arr = np.array([m["r_mpc"] for m in meta], dtype=np.float32)
+
+    # ---- consistency checks ----
+    Nr = rvals.shape[0]
+
+    def _check_pair(sr, nmodes, label):
+        if sr.ndim != 2:
+            raise ValueError(f"{label}_sr must be 2D (nslices, Nr), got shape {sr.shape}")
+        if nmodes.shape != sr.shape:
+            raise ValueError(f"{label}_nmodes has shape {nmodes.shape}, expected {sr.shape}")
+        if sr.shape[1] != Nr:
+            raise ValueError(f"{label}_sr has Nr={sr.shape[1]}, but len(rvals)={Nr}")
+
+    _check_pair(clean_sr, clean_nmodes, "clean")
+    _check_pair(noise_sr, noise_nmodes, "noise")
+    _check_pair(obs_sr,   obs_nmodes,   "obs")
+
+    # All three should have same (nslices, Nr)
+    if not (clean_sr.shape == noise_sr.shape == obs_sr.shape):
+        raise ValueError(
+            f"clean/noise/obs sr shapes must match, got "
+            f"{clean_sr.shape}, {noise_sr.shape}, {obs_sr.shape}"
+        )
+
+    nslices = clean_sr.shape[0]
+    if len(axis_arr) != nslices or len(slice_idx_arr) != nslices or len(r_mpc_arr) != nslices:
+        raise ValueError("Slice metadata length does not match number of slices in sr/nmodes.")
+
+    # ---- group naming ----
+    z_tag_base = f"zsim_{z:.2f}".replace(".", "p")
+
+    with h5py.File(h5_path, "a") as f:
+        # ---------- file-level metadata ----------
+        f.attrs["sim_name"] = sim_name
+        f.attrs["L_Mpc"] = L
+        f.attrs["N"] = N
+        if "created_utc" not in f.attrs:
+            f.attrs["created_utc"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+        # ---------- store rvals once (and verify consistency) ----------
+        if "rvals" not in f:
+            f.create_dataset("rvals", data=rvals, compression=compression)
+        else:
+            existing = f["rvals"][:]
+            if existing.shape != rvals.shape or not np.allclose(existing, rvals):
+                raise ValueError(
+                    "rvals in file do not match rvals being saved. "
+                    "Refusing to append inconsistent results."
+                )
+
+        # ---------- create (versioned) redshift group ----------
+        z_tag = _get_versioned_group_name(f, z_tag_base)
+        if z_tag != z_tag_base:
+            warnings.warn(
+                f"Redshift group '{z_tag_base}' already exists in {h5_path}. "
+                f"Saving results under '{z_tag}' instead."
+            )
+
+        g = f.create_group(z_tag)
+        g.attrs["z"] = z
+        g.attrs["z_idx"] = z_idx
+        g.attrs["delta_mpc"] = float(delta_mpc)
+        g.attrs["nslices"] = int(nslices)
+        g.attrs["Nr"] = int(Nr)
+
+        if uvmap_filename is not None:
+            g.attrs["uvmap_filename"] = str(uvmap_filename)
+        if noise_params is not None:
+            g.attrs["noise_params_json"] = json.dumps(noise_params)
+
+        # ---------- slice metadata ----------
+        sg = g.create_group("slices")
+        sg.create_dataset("axis", data=axis_arr)
+        sg.create_dataset("slice_idx", data=slice_idx_arr)
+        sg.create_dataset("r_mpc", data=r_mpc_arr)
+
+        # ---------- TCF results ----------
+        tg = g.create_group("tcf")
+
+        def _write_block(parent, name, sr, nmodes):
+            bg = parent.create_group(name)
+            bg.create_dataset("sr", data=sr, compression=compression)
+            bg.create_dataset("nmodes", data=nmodes, compression=compression)
+
+        _write_block(tg, "clean", clean_sr, clean_nmodes)
+        _write_block(tg, "noise", noise_sr, noise_nmodes)
+        _write_block(tg, "obs",   obs_sr,   obs_nmodes)
+
+    print("Everythin saved!")
+
+
+
 ################################################################################################################################################
 #################################### Main: Run All #############################################################################################
-# currently incomplete - need to add addition of noise/smoothing section 
 ################################################################################################################################################
-
-
-def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params, uvmap_filename, delta_mpc=10.0, overwrite_tcf=False):
-    """
-    Run the LoReLi → slice extraction → Triangle Correlation Function (TCF)
-    pipeline for a single simulation and redshift.
-
-    Parameters
-    ----------
-    sim_name : str
-        Simulation identifier (e.g. "10038"). Used for naming output files.
-
-    sim_cube : ndarray
-        3D simulation cube at a single redshift with shape (N, N, N).
-
-    z_idx : int
-        Index of the redshift slice used in the original simulation/lightcone.
-
-    z : float
-        Redshift corresponding to `sim_cube`. Used in output naming and plots.
-
-    L : float
-        Physical side length of the simulation box in Mpc.
-
-    rvals : array_like
-        1D array of triangle side lengths (in Mpc) at which to compute the TCF.
-
-    noise_params : dict
-        Dictionary containing parameters required for noise generation
-
-        Expected keys are:
-        - "obs_time" : float, Total observing time in hours (e.g. 1000.0).
-        - "total_int_time" : float, Total integration time per pointing in hours.
-        - "int_time" : float, Integration time per visibility sample in seconds.
-        - "declination" : float, Declination of the observed field in degrees.
-        - "subarray_type" : str, SKA-Low subarray configuration (e.g. "AA4").
-        - "bmax_km" : float, Maximum baseline length in kilometres.
-        - "verbose" : bool, If True, print detailed information during noise generation.
-        - "njobs" : int, Number of parallel jobs used for noise generation.
-
-    uvmap_filename : str
-        Path to the UV-coverage map used for generating interferometric noise.
-
-    delta_mpc : float, optional
-        Physical spacing (in Mpc) between consecutive extracted slices.
-        Default is 10.0 Mpc.
-
-    overwrite_tcf : bool, optional
-        If True, recompute TCF results even if output files already exist.
-        Default is False.
-
-    Outputs
-    -------
-    The function saves 2D slices (clean, noise only and observed) and their 
-    coresponding TCF results to disk and returns nothing.
-
-    """
-
-
 
 
 def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params, uvmap_filename, delta_mpc):
@@ -619,9 +721,10 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
     # ----------------------------
     # 3) Compute TCFs
     # ----------------------------
-    clean_sr, clean_nmodes = compute_tcf_for_list_of_slices(clean_slices, L, rvals, verbose=True)
-    noise_sr, noise_nmodes = compute_tcf_for_list_of_slices(noise_slices, L, rvals, verbose=True)
-    obs_sr,   obs_nmodes   = compute_tcf_for_list_of_slices(obs_slices,   L, rvals, verbose=True)
+    print(" %%%%% Compute TCF of CLEAN slices %%%%%%% ")
+    clean_sr, clean_nmodes, _ = compute_tcf_for_slices_list(clean_slices, L, rvals, verbose=True)
+    noise_sr, noise_nmodes, _ = compute_tcf_for_slices_list(noise_slices, L, rvals, verbose=True)
+    obs_sr, obs_nmodes, _     = compute_tcf_for_slices_list(obs_slices,   L, rvals, verbose=True)
 
     it_ends = time.time()
     print("%%%%%% IT ENDS:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(it_ends)))
@@ -662,7 +765,7 @@ sim = Cat(sim_name, redshift_range=[5.5, 6.5], skip_early=True, path_spectra='sp
 
 print("sim loaded")
 # sim params
-L = sim.box_size # Mpc (check units?)
+L = sim.box_size/4 # Mpc (check units?)
 
 # ----------------------------
 # 2. Choose redshift cube 
@@ -692,14 +795,22 @@ noise_params = {
     "njobs": 1,
 }
 
-uvmap_filename = "tests/uvmap_mock_fullsim.h5"
+uvmap_filename = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/uvmap_mock.h5"
 
 # ---------------------------- 
 # run function
 # ---------------------------- 
+delta_mpc = 20
+sim_cube = np.load("/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/mock_LoReLi_sim_N64.npy")
 
 res_dict = TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc)
 
+
+# ---------------------------- 
+# save results
+# ---------------------------- 
+h5_path = "mock_TCF_results.h5"
+save_tcf_results_h5(h5_path, res_dict, delta_mpc, noise_params, uvmap_filename, compression="gzip")
 
 
 ################################################################################################################################################
