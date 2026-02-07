@@ -28,7 +28,7 @@ from scipy.interpolate import PchipInterpolator, CubicSpline
 import warnings
 from types import SimpleNamespace
 from scipy.interpolate import RegularGridInterpolator, RectBivariateSpline
-from catwoman.shelter import Cat
+#from catwoman.shelter import Cat
 
 from pathlib import Path
 import re, subprocess
@@ -160,7 +160,7 @@ def extract_LoReLi_slices_every_dMpc(cube_3d, box_size_mpc, delta_mpc=40.0, axis
 
 
 
-def pyTCF_of_2Dslice(field2d, L, rvals, outfile):
+def pyTCF_of_2Dslice(field2d, L, rvals, outfile=None):
     """
     Compute the TCF of a single 2D field.
 
@@ -485,6 +485,7 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
         return f"{base_name}_v{i}"
 
     h5_path = Path(h5_path)
+    h5_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ---- required metadata ----
     sim_name = str(results["sim_name"])
@@ -497,12 +498,24 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
     # ---- arrays to store ----
     clean_sr     = np.asarray(results["clean_sr"])
     clean_nmodes = np.asarray(results["clean_nmodes"])
+    
+    noise_sr     = results.get("noise_sr", None)
+    noise_nmodes = results.get("noise_nmodes", None)
+    
+    obs_sr       = results.get("obs_sr", None)
+    obs_nmodes   = results.get("obs_nmodes", None)
+    
+    # Convert to arrays only if present
+    if noise_sr is not None:
+        noise_sr = np.asarray(noise_sr)
+        noise_nmodes = np.asarray(noise_nmodes)
+    
+    if obs_sr is not None:
+        obs_sr = np.asarray(obs_sr)
+        obs_nmodes = np.asarray(obs_nmodes)
 
-    noise_sr     = np.asarray(results["noise_sr"])
-    noise_nmodes = np.asarray(results["noise_nmodes"])
 
-    obs_sr       = np.asarray(results["obs_sr"])
-    obs_nmodes   = np.asarray(results["obs_nmodes"])
+    nslices = clean_sr.shape[0]
 
     # ---- slice metadata ----
     meta = results["slices_meta"]
@@ -520,21 +533,22 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
             raise ValueError(f"{label}_nmodes has shape {nmodes.shape}, expected {sr.shape}")
         if sr.shape[1] != Nr:
             raise ValueError(f"{label}_sr has Nr={sr.shape[1]}, but len(rvals)={Nr}")
-
+    
+    # always check clean
     _check_pair(clean_sr, clean_nmodes, "clean")
-    _check_pair(noise_sr, noise_nmodes, "noise")
-    _check_pair(obs_sr,   obs_nmodes,   "obs")
+    
+    # check noise/obs only if provided
+    if noise_sr is not None:
+        _check_pair(noise_sr, noise_nmodes, "noise")
+    if obs_sr is not None:
+        _check_pair(obs_sr, obs_nmodes, "obs")
+    
+    # If both optional blocks exist, ensure shapes match clean
+    if noise_sr is not None and noise_sr.shape != clean_sr.shape:
+        raise ValueError(f"noise_sr shape {noise_sr.shape} does not match clean_sr shape {clean_sr.shape}")
+    if obs_sr is not None and obs_sr.shape != clean_sr.shape:
+        raise ValueError(f"obs_sr shape {obs_sr.shape} does not match clean_sr shape {clean_sr.shape}")
 
-    # All three should have same (nslices, Nr)
-    if not (clean_sr.shape == noise_sr.shape == obs_sr.shape):
-        raise ValueError(
-            f"clean/noise/obs sr shapes must match, got "
-            f"{clean_sr.shape}, {noise_sr.shape}, {obs_sr.shape}"
-        )
-
-    nslices = clean_sr.shape[0]
-    if len(axis_arr) != nslices or len(slice_idx_arr) != nslices or len(r_mpc_arr) != nslices:
-        raise ValueError("Slice metadata length does not match number of slices in sr/nmodes.")
 
     # ---- group naming ----
     z_tag_base = f"zsim_{z:.2f}".replace(".", "p")
@@ -593,10 +607,14 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
             bg.create_dataset("nmodes", data=nmodes, compression=compression)
 
         _write_block(tg, "clean", clean_sr, clean_nmodes)
-        _write_block(tg, "noise", noise_sr, noise_nmodes)
-        _write_block(tg, "obs",   obs_sr,   obs_nmodes)
+        if noise_sr is not None:
+            _write_block(tg, "noise", noise_sr, noise_nmodes)
+        if obs_sr is not None:
+            _write_block(tg, "obs",   obs_sr,   obs_nmodes)
+
 
     print("Everythin saved!")
+
 
 
 
@@ -605,7 +623,7 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
 ################################################################################################################################################
 
 
-def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params, uvmap_filename, delta_mpc):
+def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params, uvmap_filename, delta_mpc, compute_noise=True):
     """
     Run the LoReLi → extract slices → adding noise → compute TCF pipeline for a single simulation at a single redshift.
 
@@ -704,27 +722,42 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
     # ----------------------------
     # 2) Noise + smoothing per slice
     # ----------------------------
-    depth_mhz = (cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) - L/2)) - cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) + L/2))) / N
 
-    sim_params = {"redshift": float(z), "box_length_Mpc": float(L), "box_dim": int(N)}
+    noise_slices = None
+    obs_slices = None
 
-    noise_slices = np.empty_like(clean_slices, dtype=np.float32) # list of X 2D slices, X=number of clean slices
-    obs_slices   = np.empty_like(clean_slices, dtype=np.float32) # list of X 2D slices, X=number of clean slices
+    if compute_noise:
+        depth_mhz = (cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) - L/2)) - cm.z_to_nu(cm.cdist_to_z(cm.z_to_cdist(z) + L/2))) / N
 
-    for i, sl in enumerate(clean_slices):
-        print(f"Adding noise + smoothing to {i+1}/{len(clean_slices)}")
-        noise_xy, noisy_xy, obs_xy = add_noise_smoothing(sl, uvmap_filename, sim_params, noise_params, depth_mhz)
-        noise_slices[i] = noise_xy
-        obs_slices[i]   = obs_xy
+        sim_params = {"redshift": float(z), "box_length_Mpc": float(L), "box_dim": int(N)}
+
+        noise_slices = np.empty_like(clean_slices, dtype=np.float32)
+        obs_slices   = np.empty_like(clean_slices, dtype=np.float32)
+
+        for i, sl in enumerate(clean_slices):
+            print(f"Adding noise + smoothing to {i+1}/{len(clean_slices)}")
+            noise_xy, noisy_xy, obs_xy = add_noise_smoothing(
+                sl, uvmap_filename, sim_params, noise_params, depth_mhz
+            )
+            noise_slices[i] = noise_xy
+            obs_slices[i]   = obs_xy
 
 
     # ----------------------------
     # 3) Compute TCFs
     # ----------------------------
     print(" %%%%% Compute TCF of CLEAN slices %%%%%%% ")
-    clean_sr, clean_nmodes, _ = compute_tcf_for_slices_list(clean_slices, L, rvals, verbose=True)
-    noise_sr, noise_nmodes, _ = compute_tcf_for_slices_list(noise_slices, L, rvals, verbose=True)
-    obs_sr, obs_nmodes, _     = compute_tcf_for_slices_list(obs_slices,   L, rvals, verbose=True)
+    clean_nmodes, clean_sr, _ = compute_tcf_for_slices_list(clean_slices, L, rvals, verbose=True)
+    
+    noise_nmodes = None
+    noise_sr = None
+    obs_nmodes = None
+    obs_sr = None
+
+    if compute_noise:
+        noise_nmodes, noise_sr, _ = compute_tcf_for_slices_list(noise_slices, L, rvals, verbose=True)
+        obs_nmodes, obs_sr, _     = compute_tcf_for_slices_list(obs_slices,   L, rvals, verbose=True)
+
 
     it_ends = time.time()
     print("%%%%%% IT ENDS:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(it_ends)))
@@ -738,12 +771,15 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
         "N": int(N),
         "rvals": np.asarray(rvals),
         "slices_meta": slices_meta,
+
         "clean_sr": np.asarray(clean_sr),
         "clean_nmodes": np.asarray(clean_nmodes),
-        "noise_sr": np.asarray(noise_sr),
-        "noise_nmodes": np.asarray(noise_nmodes),
-        "obs_sr": np.asarray(obs_sr),
-        "obs_nmodes": np.asarray(obs_nmodes),
+
+        "noise_sr": None if noise_sr is None else np.asarray(noise_sr),
+        "noise_nmodes": None if noise_nmodes is None else np.asarray(noise_nmodes),
+
+        "obs_sr": None if obs_sr is None else np.asarray(obs_sr),
+        "obs_nmodes": None if obs_nmodes is None else np.asarray(obs_nmodes),
     }
 
 
