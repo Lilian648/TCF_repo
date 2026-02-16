@@ -787,65 +787,65 @@ def TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z, L, rvals, noise_params,
 # testing for full cube
 
 
-# ----------------------------
-# 1. Load sim
-# ----------------------------
-base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
-sim_name = '10038'
+# # ----------------------------
+# # 1. Load sim
+# # ----------------------------
+# base_dir = '/data/cluster/emc-brid/Datasets/LoReLi' # where Lisa keeps the LoReLi info/sims
+# sim_name = '10038'
 
-print("loading sim")
-sim = Cat(sim_name, redshift_range=[5.5, 6.5], skip_early=True, path_spectra='spectra', path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes', 
-            base_dir=base_dir, load_params=False, load_spectra=False, just_Pee=True, reinitialise_spectra=False, save_spectra=False, 
-            load_density_cubes=False, load_xion_cubes=False, load_T21cm_cubes=True, verbose=True, debug=False)
+# print("loading sim")
+# sim = Cat(sim_name, redshift_range=[5.5, 6.5], skip_early=True, path_spectra='spectra', path_sim='/data/cluster/emc-brid/Datasets/LoReLi/simcubes', 
+#             base_dir=base_dir, load_params=False, load_spectra=False, just_Pee=True, reinitialise_spectra=False, save_spectra=False, 
+#             load_density_cubes=False, load_xion_cubes=False, load_T21cm_cubes=True, verbose=True, debug=False)
 
-print("sim loaded")
-# sim params
-L = sim.box_size/4 # Mpc (check units?)
+# print("sim loaded")
+# # sim params
+# L = sim.box_size/4 # Mpc (check units?)
 
-# ----------------------------
-# 2. Choose redshift cube 
-# (eg, choosing cube closest to z=6)
-# ---------------------------- 
-z_target = 6
-z_idx = np.abs(sim.z - z_target).argmin()
-z_used = float(sim.z[z_idx])
+# # ----------------------------
+# # 2. Choose redshift cube 
+# # (eg, choosing cube closest to z=6)
+# # ---------------------------- 
+# z_target = 6
+# z_idx = np.abs(sim.z - z_target).argmin()
+# z_used = float(sim.z[z_idx])
     
-sim_cube = sim.T21cm[z_idx]  # expected shape (N,N,N)
+# sim_cube = sim.T21cm[z_idx]  # expected shape (N,N,N)
 
-# ----------------------------
-# other parameters
-# ----------------------------
+# # ----------------------------
+# # other parameters
+# # ----------------------------
 
-# small r range for speed
-rvals = np.linspace(2, 50, 49)
+# # small r range for speed
+# rvals = np.linspace(2, 50, 49)
 
-noise_params = {
-    "obs_time": 1000.0,        # hours
-    "total_int_time": 6.0,     # hours
-    "int_time": 10.0,          # seconds
-    "declination": -30.0,
-    "subarray_type": "AA4",
-    "bmax_km": 2.0,
-    "verbose": True,
-    "njobs": 1,
-}
+# noise_params = {
+#     "obs_time": 1000.0,        # hours
+#     "total_int_time": 6.0,     # hours
+#     "int_time": 10.0,          # seconds
+#     "declination": -30.0,
+#     "subarray_type": "AA4",
+#     "bmax_km": 2.0,
+#     "verbose": True,
+#     "njobs": 1,
+# }
 
-uvmap_filename = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/uvmap_mock.h5"
+# uvmap_filename = "/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/uvmap_mock.h5"
 
-# ---------------------------- 
-# run function
-# ---------------------------- 
-delta_mpc = 20
-sim_cube = np.load("/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/mock_LoReLi_sim_N64.npy")
+# # ---------------------------- 
+# # run function
+# # ---------------------------- 
+# delta_mpc = 20
+# sim_cube = np.load("/home/lcrascal/Code/TCF/TCF_completed_code/TCF_python_loreli/tests/mock_LoReLi_sim_N64.npy")
 
-res_dict = TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc)
+# res_dict = TCFpipeline_single_sim(sim_name, sim_cube, z_idx, z_used, L, rvals, noise_params, uvmap_filename, delta_mpc)
 
 
-# ---------------------------- 
-# save results
-# ---------------------------- 
-h5_path = "mock_TCF_results.h5"
-save_tcf_results_h5(h5_path, res_dict, delta_mpc, noise_params, uvmap_filename, compression="gzip")
+# # ---------------------------- 
+# # save results
+# # ---------------------------- 
+# h5_path = "mock_TCF_results.h5"
+# save_tcf_results_h5(h5_path, res_dict, delta_mpc, noise_params, uvmap_filename, compression="gzip")
 
 
 ################################################################################################################################################
