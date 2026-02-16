@@ -28,7 +28,7 @@ from scipy.interpolate import PchipInterpolator, CubicSpline
 import warnings
 from types import SimpleNamespace
 from scipy.interpolate import RegularGridInterpolator, RectBivariateSpline
-#from catwoman.shelter import Cat
+from catwoman.shelter import Cat
 
 from pathlib import Path
 import re, subprocess
@@ -513,7 +513,6 @@ def save_tcf_results_h5(h5_path, results, delta_mpc, noise_params, uvmap_filenam
     if obs_sr is not None:
         obs_sr = np.asarray(obs_sr)
         obs_nmodes = np.asarray(obs_nmodes)
-
 
     nslices = clean_sr.shape[0]
 
